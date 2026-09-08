@@ -104,7 +104,7 @@
         const st = a.enabled ? a.status : 'stopped';
         const pct = Math.min(100, Math.round(100 * (a.inflight || 0) / Math.max(1, a.max_concurrency)));
         return `<div class="lane ${esc(st)}">
-          <div><div class="name">${esc(a.name)}</div><span class="sub muted">${esc(a.runner_id)}:${a.port}${a.chatgpt_account_id ? ' · ' + esc(a.chatgpt_account_id.slice(0, 8)) : ''}</span></div>
+          <div><div class="name">${esc(a.name)}</div><span class="sub muted">${esc(a.runner_id)}:${a.port}${a.chatgpt_account_id ? '  账号 ' + esc(a.chatgpt_account_id.slice(0, 8)) : ''}</span></div>
           <div class="bar"><i style="width:${pct}%"></i></div>
           <div class="count">${state(st)}<br><span class="muted">${a.inflight} / ${a.max_concurrency}</span></div>
           ${a.last_error ? `<div class="err">${esc(a.last_error)}</div>` : ''}
