@@ -104,16 +104,14 @@ async fn require_session(
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim)
         .filter(|b| !b.is_empty())
-    {
-        if secret_eq(b, &st.cfg.admin_token)
+        && (secret_eq(b, &st.cfg.admin_token)
             || st
                 .cache
                 .session_valid(b, SESSION_TTL_SECS)
                 .await
-                .unwrap_or(false)
-        {
-            return next.run(req).await;
-        }
+                .unwrap_or(false))
+    {
+        return next.run(req).await;
     }
     match session_id(&headers) {
         Some(sid)
