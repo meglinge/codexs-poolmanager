@@ -2,14 +2,22 @@
 (() => {
   const $ = (sel, el = document) => el.querySelector(sel);
   const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let loginAt = 0;
   const api = async (path, opts = {}) => {
+    const { _retried, ...fetchOpts } = opts;
     const res = await fetch(`/admin/api${path}`, {
-      headers: { 'content-type': 'application/json', ...(opts.headers || {}) },
+      headers: { 'content-type': 'application/json', ...(fetchOpts.headers || {}) },
       credentials: 'same-origin',
-      ...opts,
-      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      ...fetchOpts,
+      body: fetchOpts.body !== undefined ? JSON.stringify(fetchOpts.body) : undefined,
     });
-    if (res.status === 401) { showLogin(); throw new Error('login required'); }
+    if (res.status === 401) {
+      // The session cookie set by /login can lag the next request by a few ms
+      // in Chromium; retry once shortly after a login instead of bouncing.
+      if (!_retried && Date.now() - loginAt < 3000) { await sleep(200); return api(path, { ...opts, _retried: true }); }
+      showLogin(); throw new Error('login required');
+    }
     const text = await res.text();
     let data = text;
     try { data = JSON.parse(text); } catch { /* plain text (logs) */ }
@@ -37,7 +45,13 @@
     $('#login-error').textContent = '';
     try {
       await api('/login', { method: 'POST', body: { token: $('#login-token').value } });
+      loginAt = Date.now();
       $('#login-token').value = '';
+      for (let i = 0; i < 10; i += 1) {
+        const me = await api('/me').catch(() => ({}));
+        if (me.authenticated) break;
+        await sleep(100);
+      }
       showApp(); route();
     } catch (err) { $('#login-error').textContent = err.message === 'login required' ? 'token 不正确' : err.message; }
   });
