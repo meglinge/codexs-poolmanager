@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, RefreshCw } from 'lucide-react'
+import { MoreHorizontal, Plus, RefreshCw } from 'lucide-react'
 
 import {
   accountAction,
@@ -18,6 +18,13 @@ import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { OnOff, StatusBadge } from '@/components/pool/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
@@ -231,13 +238,23 @@ export default function Accounts() {
                         <OnOff on={account.enabled} />
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right">
-                        <div className="inline-flex gap-1">
-                          <Button size="sm" variant="ghost" disabled={busy === account.id} onClick={() => act(account, 'start')}>启动</Button>
-                          <Button size="sm" variant="ghost" disabled={busy === account.id} onClick={() => act(account, 'restart')}>重启</Button>
-                          <Button size="sm" variant="ghost" disabled={busy === account.id} onClick={() => act(account, 'stop')}>停止</Button>
+                        <div className="inline-flex items-center gap-1">
                           <Button size="sm" variant="ghost" onClick={() => showLogs(account)}>日志</Button>
                           <Button size="sm" variant="ghost" onClick={() => openEditor(account)}>编辑</Button>
-                          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => remove(account)}>删除</Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="icon" variant="ghost" className="h-8 w-8" disabled={busy === account.id} aria-label="更多操作">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onSelect={() => act(account, 'start')}>启动</DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => act(account, 'restart')}>重启</DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => act(account, 'stop')}>停止</DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => remove(account)}>删除</DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -310,7 +327,7 @@ export default function Accounts() {
               <FormField label="auth.json" htmlFor="acct-auth" required={!editing.account}>
                 <Textarea
                   id="acct-auth"
-                  className="min-h-[140px] font-mono text-xs"
+                  className="min-h-[110px] font-mono text-xs"
                   placeholder='{"auth_mode":"chatgpt","tokens":{"access_token":"...","refresh_token":"...","account_id":"..."}}'
                   value={editing.draft.auth_json}
                   onChange={(e) => setDraft({ auth_json: e.target.value })}
