@@ -287,6 +287,22 @@ async fn proxy(State(st): State<Arc<AppState>>, req: axum::extract::Request) -> 
         serde_json::Value::Null
     };
 
+    let meta = RequestMeta {
+        model: json
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        service_tier: json
+            .get("service_tier")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        stream: json
+            .get("stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        ttft_ms: None,
+    };
+
     // GET /v1/models and friends: no capacity accounting, any running account.
     let accounting = parts.method == Method::POST;
     let pinned = if accounting {
@@ -349,6 +365,7 @@ async fn proxy(State(st): State<Arc<AppState>>, req: axum::extract::Request) -> 
                         started,
                         None,
                         Some(e.to_string()),
+                        meta.clone(),
                     );
                     return err(
                         StatusCode::BAD_GATEWAY,
@@ -387,6 +404,8 @@ async fn proxy(State(st): State<Arc<AppState>>, req: axum::extract::Request) -> 
         status: status.as_u16() as i32,
         started,
         accounting,
+        meta,
+        first_byte: None,
         release_key: Some(Box::new(release_key)),
         head: Vec::with_capacity(HEAD_KEEP),
         tail: Vec::with_capacity(TAIL_KEEP),
@@ -411,11 +430,23 @@ struct Observer {
     status: i32,
     started: Instant,
     accounting: bool,
+    meta: RequestMeta,
+    first_byte: Option<Instant>,
     release_key: Option<Box<dyn FnOnce() + Send>>,
     head: Vec<u8>,
     tail: Vec<u8>,
     inner: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
     done: bool,
+}
+
+/// What we know about a request before the upstream answers; recorded with
+/// the usage event.
+#[derive(Debug, Clone, Default)]
+pub struct RequestMeta {
+    pub model: Option<String>,
+    pub service_tier: Option<String>,
+    pub stream: bool,
+    pub ttft_ms: Option<i32>,
 }
 
 impl Stream for Observer {
@@ -424,6 +455,9 @@ impl Stream for Observer {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.inner.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(chunk))) => {
+                if self.first_byte.is_none() && !chunk.is_empty() {
+                    self.first_byte = Some(Instant::now());
+                }
                 if self.head.len() < HEAD_KEEP {
                     let take = (HEAD_KEEP - self.head.len()).min(chunk.len());
                     self.head.extend_from_slice(&chunk[..take]);
@@ -459,6 +493,13 @@ impl Observer {
         let accounting = self.accounting;
         let response_id = extract_response_id(&self.head);
         let usage = extract_usage(&self.tail);
+        let mut meta = self.meta.clone();
+        meta.ttft_ms = self
+            .first_byte
+            .map(|t| (t - self.started).as_millis().min(i32::MAX as u128) as i32);
+        if meta.model.is_none() {
+            meta.model = extract_model(&self.head);
+        }
         let ttl = st.cfg.sticky_ttl_secs;
         let cleanup_st = Arc::clone(&st);
         tokio::spawn(async move {
@@ -481,6 +522,7 @@ impl Observer {
             self.started,
             usage,
             error,
+            meta,
         );
     }
 }
@@ -501,6 +543,7 @@ pub struct Usage {
     pub input: i64,
     pub output: i64,
     pub cached: i64,
+    pub reasoning: i64,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -513,19 +556,34 @@ fn record_usage(
     started: Instant,
     usage: Option<Usage>,
     error: Option<String>,
+    meta: RequestMeta,
 ) {
     let st = Arc::clone(st);
     let key_id = key.id;
+    let u = usage.unwrap_or_default();
+    let cost_usd = meta
+        .model
+        .as_deref()
+        .map(|m| {
+            crate::pricing::cost_usd(m, meta.service_tier.as_deref(), u.input, u.output, u.cached)
+        })
+        .unwrap_or(0.0);
     let event = db::UsageEvent {
         api_key_id: Some(key_id),
         account_id,
         path: path.to_string(),
         status,
         latency_ms: started.elapsed().as_millis().min(i32::MAX as u128) as i32,
-        input_tokens: usage.map(|u| u.input).unwrap_or(0),
-        output_tokens: usage.map(|u| u.output).unwrap_or(0),
-        cached_tokens: usage.map(|u| u.cached).unwrap_or(0),
+        input_tokens: u.input,
+        output_tokens: u.output,
+        cached_tokens: u.cached,
         error,
+        model: meta.model,
+        service_tier: meta.service_tier,
+        stream: meta.stream,
+        ttft_ms: meta.ttft_ms,
+        reasoning_tokens: u.reasoning,
+        cost_usd,
     };
     tokio::spawn(async move {
         if let Err(e) = db::insert_usage(&st.db, &event).await {
@@ -582,11 +640,28 @@ fn extract_usage(tail: &[u8]) -> Option<Usage> {
         .or_else(|| obj.pointer("/prompt_tokens_details/cached_tokens"))
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
+    let reasoning = obj
+        .pointer("/output_tokens_details/reasoning_tokens")
+        .or_else(|| obj.pointer("/completion_tokens_details/reasoning_tokens"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     Some(Usage {
         input: g("input_tokens").max(g("prompt_tokens")),
         output: g("output_tokens").max(g("completion_tokens")),
         cached,
+        reasoning,
     })
+}
+
+/// `"model":"…"` in the body head (the model the upstream actually served).
+fn extract_model(head: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(head);
+    let pos = text.find("\"model\"")?;
+    let after = text[pos + 7..].trim_start().strip_prefix(':')?.trim_start();
+    let rest = after.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    let m = &rest[..end];
+    (!m.is_empty()).then(|| m.to_string())
 }
 
 #[cfg(test)]

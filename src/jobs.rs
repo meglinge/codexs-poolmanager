@@ -109,6 +109,32 @@ async fn tick(st: &Arc<AppState>, ticks: u64) -> anyhow::Result<()> {
         }
     }
 
+    // Official quota (5h / 7d windows) once a minute-ish per enabled account,
+    // official daily usage once an hour (deep backfill the first time).
+    // Both are zero-cost upstream calls made through the account's proxy.
+    if ticks.is_multiple_of(4) {
+        let hourly = ticks.is_multiple_of(240);
+        for a in accounts
+            .iter()
+            .filter(|a| a.enabled && !a.auth_json.is_null())
+        {
+            if let Err(e) = crate::wham::sync_quota(st, a).await {
+                warn!(account = %a.name, "quota probe failed: {e:#}");
+            }
+            let needs_backfill = matches!(
+                db::get_daily_sync(&st.db, a.id).await,
+                Ok(None)
+                    | Ok(Some(db::DailySync {
+                        backfilled: false,
+                        ..
+                    }))
+            );
+            if hourly || needs_backfill {
+                crate::wham::sync_daily_job(st, a).await;
+            }
+        }
+    }
+
     // Prune usage once an hour-ish.
     if ticks.is_multiple_of(240) {
         match db::prune_usage(&st.db, st.cfg.usage_retention_days).await {

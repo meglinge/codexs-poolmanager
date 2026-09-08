@@ -6,18 +6,21 @@
 //!   poolmanager runner  -- starts/stops codexs processes on a host
 
 mod admin;
+mod admin_usage;
 mod cache;
 mod config;
 mod control;
 mod db;
 mod gateway;
 mod jobs;
+mod pricing;
 mod runner;
 mod runner_api;
 mod runner_client;
 mod state;
 mod ui;
 mod util;
+mod wham;
 
 use std::sync::Arc;
 use std::time::Duration;

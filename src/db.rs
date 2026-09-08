@@ -9,6 +9,11 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
+mod account_usage;
+mod official;
+pub use account_usage::*;
+pub use official::*;
+
 pub async fn connect(url: &str) -> anyhow::Result<PgPool> {
     let pool = PgPoolOptions::new()
         .max_connections(16)
@@ -348,12 +353,19 @@ pub struct UsageEvent {
     pub output_tokens: i64,
     pub cached_tokens: i64,
     pub error: Option<String>,
+    pub model: Option<String>,
+    pub service_tier: Option<String>,
+    pub stream: bool,
+    pub ttft_ms: Option<i32>,
+    pub reasoning_tokens: i64,
+    pub cost_usd: f64,
 }
 
 pub async fn insert_usage(pool: &PgPool, e: &UsageEvent) -> sqlx::Result<()> {
     sqlx::query(
-        "INSERT INTO usage_events (api_key_id, account_id, path, status, latency_ms, input_tokens, output_tokens, cached_tokens, error)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        "INSERT INTO usage_events (api_key_id, account_id, path, status, latency_ms, input_tokens, output_tokens, cached_tokens, error,
+                                   model, service_tier, stream, ttft_ms, reasoning_tokens, cost_usd)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
     )
     .bind(e.api_key_id)
     .bind(e.account_id)
@@ -364,6 +376,12 @@ pub async fn insert_usage(pool: &PgPool, e: &UsageEvent) -> sqlx::Result<()> {
     .bind(e.output_tokens)
     .bind(e.cached_tokens)
     .bind(&e.error)
+    .bind(&e.model)
+    .bind(&e.service_tier)
+    .bind(e.stream)
+    .bind(e.ttft_ms)
+    .bind(e.reasoning_tokens)
+    .bind(e.cost_usd)
     .execute(pool)
     .await?;
     Ok(())
@@ -428,6 +446,12 @@ pub struct UsageRow {
     pub output_tokens: i64,
     pub cached_tokens: i64,
     pub error: Option<String>,
+    pub model: Option<String>,
+    pub service_tier: Option<String>,
+    pub stream: bool,
+    pub ttft_ms: Option<i32>,
+    pub reasoning_tokens: i64,
+    pub cost_usd: f64,
 }
 
 pub async fn recent_usage(pool: &PgPool, limit: i64) -> sqlx::Result<Vec<UsageRow>> {
