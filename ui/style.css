@@ -93,17 +93,19 @@ code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); 
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: var(--shadow); padding: 18px 20px; margin-bottom: 18px;
 }
-.card .table { margin: 0 -20px -18px; width: calc(100% + 40px); }
+.card.flush { padding: 0; overflow-x: auto; }
+.card.flush h2 { padding: 16px 20px 0; margin-bottom: 4px; }
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td { text-align: left; padding: 11px 20px; vertical-align: middle; }
 .table th { font-size: 12px; font-weight: 600; color: var(--ink-3); border-bottom: 1px solid var(--line); white-space: nowrap; }
-.table td { border-bottom: 1px solid var(--line); }
+.table td { border-bottom: 1px solid var(--line); white-space: nowrap; }
+.table td.wrap { white-space: normal; min-width: 16ch; }
 .table tbody tr:last-child td { border-bottom: 0; }
 .table tbody tr:hover td { background: var(--surface-2); }
 .table .num { text-align: right; font-variant-numeric: tabular-nums; }
-.table td.actions { text-align: right; white-space: nowrap; width: 1%; }
-.table td.mono, .table td.num, .table .state, .table .pill { white-space: nowrap; }
+.table td.actions { text-align: right; }
 .table td:first-child { font-weight: 500; }
+.table td.mono { max-width: 28ch; overflow: hidden; text-overflow: ellipsis; }
 .table td.actions .btn { margin-left: 4px; }
 .table .sub { display: block; color: var(--ink-3); font-size: 12px; margin-top: 2px; }
 .empty { color: var(--ink-3); padding: 28px 20px; text-align: center; }

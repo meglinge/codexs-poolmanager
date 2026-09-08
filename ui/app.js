@@ -252,7 +252,7 @@
       $('#usage-recent tbody').innerHTML = recent.map((u) => `<tr><td class="muted">${fmtTime(u.ts)}</td><td class="mono">${esc(u.path)}</td>
         <td>${u.status >= 400 ? `<span class="pill bad">${u.status}</span>` : `<span class="pill on">${u.status}</span>`}</td><td class="num">${u.latency_ms} ms</td>
         <td class="num">${fmtNum(u.input_tokens)} / ${fmtNum(u.output_tokens)} / ${fmtNum(u.cached_tokens)}</td>
-        <td class="muted">${esc(u.error || '')}</td></tr>`).join('') || empty(6, '还没有请求记录。');
+        <td class="muted wrap">${esc(u.error || '')}</td></tr>`).join('') || empty(6, '还没有请求记录。');
       $('#usage-hours').onchange = route;
     },
   };
