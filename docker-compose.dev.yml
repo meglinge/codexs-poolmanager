@@ -1,0 +1,20 @@
+# Build the image from this checkout instead of pulling it from ghcr:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# Set CODEXS_VERSION in .env to pick the codexs release baked into the image.
+services:
+  runner:
+    image: codexs-poolmanager:dev
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        CODEXS_VERSION: ${CODEXS_VERSION:-0.153.4}
+  manager-a:
+    image: codexs-poolmanager:dev
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        CODEXS_VERSION: ${CODEXS_VERSION:-0.153.4}
+  manager-b:
+    image: codexs-poolmanager:dev
