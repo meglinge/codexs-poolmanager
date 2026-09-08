@@ -29,8 +29,10 @@ clients ──► HAProxy ──► manager-a / manager-b ──► codexs :8790
   the instances.
 * **Admin UI** at `/admin`: accounts (create from `auth.json`, proxy, limits,
   start/stop/restart, logs), API keys (secret shown once), runners, usage.
-  Single admin token; the same token works as `Authorization: Bearer` for
-  scripts.
+  Built on [ASXS-API/frontend-template](https://github.com/ASXS-API/frontend-template)
+  (React 19 / Vite / Tailwind / shadcn) in `web/`, compiled into the binary.
+  Single admin token; the login exchanges it for a session token, and the
+  admin token itself also works as `Authorization: Bearer` for scripts.
 * **Blue/green**: two manager replicas behind HAProxy; update one at a time.
   Background jobs (health checks, reconciliation, auth.json sync, usage
   pruning) run on whichever replica holds the Redis leader lock.
@@ -122,9 +124,11 @@ brought back by the reconciliation job).
 ## Development
 
 ```
+(cd web && npm ci && npm run build)      # admin UI -> web/dist (embedded at cargo build time)
 cargo test
 PM_DATABASE_URL=postgres://… PM_ADMIN_TOKEN=x cargo run -- serve
 PM_RUNNER_TOKEN=y PM_CODEXS_BIN=/path/to/codexs cargo run -- runner
+(cd web && npm run dev)                  # UI dev server on :5278, proxies /admin/api to :8800
 ```
 
 CI runs fmt/clippy/tests plus an end-to-end smoke test against real Postgres

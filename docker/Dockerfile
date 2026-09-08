@@ -2,12 +2,20 @@
 # The runner role needs the codexs binaries, which are downloaded from the
 # meglinge/codex releases at build time (CODEXS_VERSION = official Codex version).
 
+# Admin UI (React/Vite, see web/README.md) is embedded into the binary.
+FROM node:22-bookworm-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web ./
+RUN npm run build
+
 FROM rust:1.94-bookworm AS builder
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY migrations ./migrations
-COPY ui ./ui
 COPY src ./src
+COPY --from=web /web/dist ./web/dist
 RUN cargo build --release --locked && strip target/release/poolmanager
 
 FROM debian:bookworm-slim AS runtime

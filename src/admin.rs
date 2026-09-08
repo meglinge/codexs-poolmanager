@@ -52,11 +52,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/usage/summary", get(usage_summary))
         .route("/usage/recent", get(usage_recent))
         .route("/logout", post(logout))
+        .route("/auth/logout", post(auth_logout))
+        .route("/auth/status", get(auth_status))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_session,
         ))
         .route("/login", post(login))
+        .route("/auth/login", post(auth_login))
         .route("/me", get(me));
     Router::new()
         .nest("/admin/api", api)
@@ -93,14 +96,24 @@ async fn require_session(
     req: axum::extract::Request,
     next: Next,
 ) -> Response {
-    // Also accept the admin token directly as a bearer for scripted use.
+    // Bearer: either the admin token itself (scripts) or a session token
+    // issued by /auth/login (the SPA keeps it in localStorage).
     if let Some(b) = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        && secret_eq(b, &st.cfg.admin_token)
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
     {
-        return next.run(req).await;
+        if secret_eq(b, &st.cfg.admin_token)
+            || st
+                .cache
+                .session_valid(b, SESSION_TTL_SECS)
+                .await
+                .unwrap_or(false)
+        {
+            return next.run(req).await;
+        }
     }
     match session_id(&headers) {
         Some(sid)
@@ -142,6 +155,40 @@ async fn logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response
     }
     let cookie = format!("{SESSION_COOKIE}=; Path=/admin; HttpOnly; Max-Age=0");
     ([(header::SET_COOKIE, cookie)], Json(json!({ "ok": true }))).into_response()
+}
+
+/// Template-style auth: the SPA stores the returned session token and sends
+/// it as `Authorization: Bearer`.
+async fn auth_login(State(st): State<Arc<AppState>>, Json(body): Json<LoginBody>) -> Response {
+    if !secret_eq(&body.token, &st.cfg.admin_token) {
+        return api_err(StatusCode::UNAUTHORIZED, "token 不正确");
+    }
+    match st.cache.session_create(SESSION_TTL_SECS).await {
+        Ok(sid) => Json(json!({ "token": sid })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .map(str::to_string)
+}
+
+async fn auth_logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Some(sid) = bearer_token(&headers) {
+        let _ = st.cache.session_delete(&sid).await;
+    }
+    Json(json!({ "ok": true })).into_response()
+}
+
+async fn auth_status(State(st): State<Arc<AppState>>) -> Response {
+    // Reaching here means require_session accepted the bearer.
+    Json(json!({ "authenticated": true, "instance": st.cfg.instance_id, "version": env!("CARGO_PKG_VERSION") })).into_response()
 }
 
 async fn me(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
