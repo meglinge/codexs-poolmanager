@@ -77,8 +77,8 @@ export function RequestsTab({ accountId, range, models, full }: { accountId: str
           <InlineLoader />
         </div>
       ) : (
-        <div className={cn('ops-table-shell', loading && 'opacity-60')}>
-          <Table>
+        <div className={cn('ops-table-shell overflow-x-auto', loading && 'opacity-60')}>
+          <Table className="min-w-[1040px]">
             <TableHeader>
               <TableRow>
                 <TableHead>时间</TableHead>
@@ -97,8 +97,8 @@ export function RequestsTab({ accountId, range, models, full }: { accountId: str
               {data.rows.length ? (
                 data.rows.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeFull(r.ts)}</TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeFull(r.ts).slice(5)}</TableCell>
+                    <TableCell className="whitespace-nowrap">
                       <span className={cn('inline-flex rounded-full px-2 py-0.5 font-mono text-xs font-semibold', r.status >= 400 ? 'bg-destructive/10 text-destructive' : 'bg-accent text-primary')}>{r.status}</span>
                     </TableCell>
                     <TableCell className="whitespace-nowrap">

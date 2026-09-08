@@ -282,8 +282,6 @@ export default function Accounts() {
                   <TableHead>官方额度</TableHead>
                   <TableHead>成本</TableHead>
                   <TableHead className="text-right">请求(7d)</TableHead>
-                  <TableHead className="text-right">并发 / RPM</TableHead>
-                  <TableHead>启用</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
@@ -294,9 +292,12 @@ export default function Accounts() {
                     return (
                       <TableRow key={account.id}>
                         <TableCell>
-                          <div className="font-medium">{account.name}</div>
-                          <div className="max-w-[26ch] truncate font-mono text-xs text-muted-foreground" title={account.proxy_url ?? ''}>
-                            {account.runner_id}:{account.port} · {account.proxy_url || '直连'}
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{account.name}</span>
+                            {!account.enabled ? <OnOff on={false} /> : null}
+                          </div>
+                          <div className="max-w-[30ch] truncate font-mono text-xs text-muted-foreground" title={`${account.runner_id}:${account.port} · ${account.proxy_url || '直连'} · 并发 ${account.max_concurrency} / RPM ${account.rpm_limit ?? '∞'}`}>
+                            {account.runner_id}:{account.port} · {account.proxy_url || '直连'} · {account.max_concurrency}/{account.rpm_limit ?? '∞'}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -322,12 +323,6 @@ export default function Accounts() {
                           ) : (
                             <span className="text-xs text-muted-foreground">0</span>
                           )}
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-right tabular-nums">
-                          {account.max_concurrency} / {account.rpm_limit ?? '∞'}
-                        </TableCell>
-                        <TableCell>
-                          <OnOff on={account.enabled} />
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-right">
                           <div className="inline-flex items-center gap-1">
@@ -359,7 +354,7 @@ export default function Accounts() {
                   })
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={9}>
+                    <TableCell colSpan={7}>
                       <EmptyState
                         title="还没有账号"
                         description="点右上角「新建账号」,粘贴 codex login 生成的 auth.json。"

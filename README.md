@@ -29,6 +29,18 @@ clients ──► HAProxy ──► manager-a / manager-b ──► codexs :8790
   the instances.
 * **Admin UI** at `/admin`: accounts (create from `auth.json`, proxy, limits,
   start/stop/restart, logs), API keys (secret shown once), runners, usage.
+  Each account row shows a health strip (20 x 10 min success/failure
+  buckets), the official 5h / 7d quota windows with reset countdown, and
+  cost in both currencies (gateway estimate vs official billing).
+* **Account usage panel** (per account): 概览 / 明细 / 质量 / 官方 / 请求
+  tabs with per-day trend, model and key distribution, token composition,
+  error / TTFT / P95 / stream / cache signals, a paged request log, and the
+  official ChatGPT accounting: per-day credits (1 USD = 25 credits) split
+  by client and by model x speed, cycle estimate (used ÷ used %), plus the
+  rate-limit reset vouchers (list with expiry, consume with an idempotent
+  redeem id). Gateway cost is estimated at write time from the embedded
+  `src/pricing.json` (USD per 1M tokens, same format as codex2api;
+  extend/override with `PM_PRICING_FILE`).
   Built on [ASXS-API/frontend-template](https://github.com/ASXS-API/frontend-template)
   (React 19 / Vite / Tailwind / shadcn) in `web/`, compiled into the binary.
   Single admin token; the login exchanges it for a session token, and the
@@ -116,6 +128,11 @@ brought back by the reconciliation job).
 * Codex refreshes OAuth tokens on disk; the leader syncs the instance's
   `auth.json` back into Postgres periodically so a move to another runner
   keeps working credentials.
+* The leader also calls the zero-cost official usage endpoints
+  (`chatgpt.com/backend-api/wham/…`) through each account's own proxy:
+  live windows every ~minute, daily usage hourly (84-day backfill on the
+  first sync). `PM_CODEX_UA_VERSION` sets the Codex CLI version in the
+  User-Agent used for those calls.
 * The runner keeps children only in memory: restarting the runner container
   restarts every instance (the reconciliation job brings them back).
 * Codex's sandbox uses `bwrap`; in Docker the runner needs user namespaces
