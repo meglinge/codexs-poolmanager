@@ -115,3 +115,11 @@ volumes:
   pgdata:
   redisdata:
   runnerdata:
+
+# Fixed subnet so the stack still comes up on hosts whose default Docker
+# address pools are exhausted; override with COMPOSE_SUBNET in .env.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${COMPOSE_SUBNET:-10.250.0.0/24}
