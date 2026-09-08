@@ -77,19 +77,19 @@ export function RequestsTab({ accountId, range, models, full }: { accountId: str
           <InlineLoader />
         </div>
       ) : (
-        <div className={cn('ops-table-shell overflow-x-auto', loading && 'opacity-60')}>
-          <Table className="min-w-[1040px]">
+        <div className={cn('ops-table-shell w-full min-w-0 overflow-x-auto', loading && 'opacity-60')}>
+          <Table className="min-w-[1180px]">
             <TableHeader>
               <TableRow>
-                <TableHead>时间</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>模型</TableHead>
-                <TableHead>Key</TableHead>
-                <TableHead>端点</TableHead>
-                <TableHead className="text-right">Token</TableHead>
-                <TableHead className="text-right">成本</TableHead>
-                <TableHead className="text-right">首字</TableHead>
-                <TableHead className="text-right">总耗时</TableHead>
+                <TableHead className="w-[120px]">时间</TableHead>
+                <TableHead className="w-[64px]">状态</TableHead>
+                <TableHead className="w-[130px]">模型</TableHead>
+                <TableHead className="w-[110px]">Key</TableHead>
+                <TableHead className="w-[200px]">端点</TableHead>
+                <TableHead className="w-[210px] text-right">Token</TableHead>
+                <TableHead className="w-[80px] text-right">成本</TableHead>
+                <TableHead className="w-[70px] text-right">首字</TableHead>
+                <TableHead className="w-[76px] text-right">总耗时</TableHead>
                 <TableHead>错误</TableHead>
               </TableRow>
             </TableHeader>

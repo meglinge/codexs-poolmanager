@@ -100,7 +100,7 @@ export function AccountUsageDialog({ target, onClose }: { target: UsageTarget | 
 
   return (
     <Dialog open={Boolean(target)} onOpenChange={(open) => (!open ? onClose() : null)}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto p-0 sm:max-w-[1000px]">
+      <DialogContent className="max-h-[92vh] overflow-x-hidden overflow-y-auto p-0 sm:max-w-[1000px]">
         <DialogHeader className="sr-only">
           <DialogTitle>用量统计 — {target?.name}</DialogTitle>
           <DialogDescription>账号 {target?.name} 的用量、质量与官方结算。</DialogDescription>
@@ -150,7 +150,7 @@ export function AccountUsageDialog({ target, onClose }: { target: UsageTarget | 
           </label>
         </div>
 
-        <div className="space-y-5 px-5 py-5">
+        <div className="min-w-0 space-y-5 px-5 py-5">
           {loading && !data && !officialReady ? (
             <div className="py-12 text-center text-sm text-muted-foreground">加载中…</div>
           ) : error && !data && !officialReady ? (
