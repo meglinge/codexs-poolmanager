@@ -212,9 +212,7 @@ export default function Accounts() {
                   <TableHead>状态</TableHead>
                   <TableHead>Runner</TableHead>
                   <TableHead>端口</TableHead>
-                  <TableHead>代理</TableHead>
-                  <TableHead className="text-right">并发</TableHead>
-                  <TableHead className="text-right">RPM</TableHead>
+                  <TableHead className="text-right">并发 / RPM</TableHead>
                   <TableHead>启用</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -223,17 +221,20 @@ export default function Accounts() {
                 {list.length ? (
                   list.map((account) => (
                     <TableRow key={account.id}>
-                      <TableCell className="font-medium">{account.name}</TableCell>
+                      <TableCell>
+                        <div className="font-medium">{account.name}</div>
+                        <div className="max-w-[28ch] truncate font-mono text-xs text-muted-foreground" title={account.proxy_url ?? ''}>
+                          {account.proxy_url || '直连'}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <StatusBadge status={account.status} />
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{account.runner_id}</TableCell>
                       <TableCell className="font-mono text-xs">{account.port}</TableCell>
-                      <TableCell className="max-w-[24ch] truncate font-mono text-xs" title={account.proxy_url ?? ''}>
-                        {account.proxy_url || '—'}
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">
+                        {account.max_concurrency} / {account.rpm_limit ?? '∞'}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{account.max_concurrency}</TableCell>
-                      <TableCell className="text-right tabular-nums">{account.rpm_limit ?? '∞'}</TableCell>
                       <TableCell>
                         <OnOff on={account.enabled} />
                       </TableCell>
@@ -261,7 +262,7 @@ export default function Accounts() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={9}>
+                    <TableCell colSpan={7}>
                       <EmptyState
                         title="还没有账号"
                         description="点右上角「新建账号」,粘贴 codex login 生成的 auth.json。"
