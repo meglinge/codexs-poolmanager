@@ -1,0 +1,145 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+  IMAGE: ghcr.io/${{ github.repository_owner }}/codexs-poolmanager
+
+jobs:
+  test:
+    name: Check, test, smoke
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: poolmanager
+          POSTGRES_PASSWORD: pm
+          POSTGRES_DB: poolmanager
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U poolmanager" --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - run: cargo build --release
+
+      - name: Smoke test (serve + runner against real Postgres/Redis)
+        env:
+          PM_DATABASE_URL: postgres://poolmanager:pm@127.0.0.1:5432/poolmanager
+          PM_REDIS_URL: redis://127.0.0.1:6379
+          PM_ADMIN_TOKEN: admin-secret
+          PM_RUNNER_TOKEN: runner-secret
+        run: |
+          set -euo pipefail
+          BIN=target/release/poolmanager
+          # A stand-in "codexs" so the runner can spawn something that serves /v1/models.
+          mkdir -p /tmp/fake && cat > /tmp/fake/codexs <<'EOF'
+          #!/usr/bin/env bash
+          # args: server --host H --port P --codex-home DIR [--proxy X]
+          port=8790
+          while [[ $# -gt 0 ]]; do case "$1" in --port) port="$2"; shift 2;; *) shift;; esac; done
+          exec python3 -c "
+          import http.server, json, sys
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  b=json.dumps({'object':'list','data':[{'id':'gpt-5','object':'model'}]}).encode()
+                  self.send_response(200); self.send_header('content-type','application/json'); self.end_headers(); self.wfile.write(b)
+              def do_POST(self):
+                  n=int(self.headers.get('content-length','0')); self.rfile.read(n)
+                  b=json.dumps({'id':'resp_test1','object':'response','usage':{'input_tokens':3,'output_tokens':2}}).encode()
+                  self.send_response(200); self.send_header('content-type','application/json'); self.end_headers(); self.wfile.write(b)
+              def log_message(self,*a): pass
+          http.server.ThreadingHTTPServer(('0.0.0.0',$port),H).serve_forever()
+          "
+          EOF
+          chmod +x /tmp/fake/codexs
+
+          PM_RUNNER_DATA_DIR=/tmp/runner PM_CODEXS_BIN=/tmp/fake/codexs PM_RUNNER_LISTEN=127.0.0.1:7000 \
+            $BIN runner > /tmp/runner.log 2>&1 &
+          PM_LISTEN=127.0.0.1:8800 PM_HEALTH_INTERVAL_SECS=5 $BIN serve > /tmp/serve.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8800/healthz && break || sleep 1; done
+          echo; curl -fsS http://127.0.0.1:8800/healthz | grep '"ok":true'
+
+          A="Authorization: Bearer admin-secret"
+          curl -fsS -H "$A" -H 'content-type: application/json' -X POST http://127.0.0.1:8800/admin/api/runners \
+            -d '{"id":"local","name":"local","base_url":"http://127.0.0.1:7000","token":"runner-secret","public_host":"127.0.0.1"}'
+          echo
+          ACC=$(curl -fsS -H "$A" -H 'content-type: application/json' -X POST http://127.0.0.1:8800/admin/api/accounts \
+            -d '{"name":"acct1","runner_id":"local","port":8791,"max_concurrency":2,"auth_json":{"auth_mode":"chatgpt","tokens":{"access_token":"eyJ.fake.token","refresh_token":"r","account_id":"acct-1"}}}')
+          echo "$ACC"
+          KEY=$(curl -fsS -H "$A" -H 'content-type: application/json' -X POST http://127.0.0.1:8800/admin/api/keys -d '{"name":"ci"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["key"])')
+          # Background job starts the instance and marks it running within a few ticks.
+          for i in $(seq 1 40); do
+            st=$(curl -fsS -H "$A" http://127.0.0.1:8800/admin/api/overview | python3 -c 'import sys,json; print(json.load(sys.stdin)["accounts"][0]["status"])')
+            echo "status=$st"; [[ "$st" == "running" ]] && break; sleep 2
+          done
+          [[ "$st" == "running" ]]
+          # Gateway round trip through the fake instance.
+          OUT=$(curl -fsS -H "Authorization: Bearer $KEY" -H 'content-type: application/json' -X POST http://127.0.0.1:8800/v1/responses -d '{"model":"gpt-5","input":"hi"}')
+          echo "$OUT"; grep -q resp_test1 <<<"$OUT"
+          # Bad key is rejected.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer nope" -X POST http://127.0.0.1:8800/v1/responses -d '{}')
+          [[ "$code" == "401" ]]
+          # Usage recorded.
+          sleep 1; curl -fsS -H "$A" 'http://127.0.0.1:8800/admin/api/usage/recent?limit=5' | grep -q '"status":200'
+          echo "smoke ok"
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          echo "== serve"; cat /tmp/serve.log || true
+          echo "== runner"; cat /tmp/runner.log || true
+          echo "== instance"; cat /tmp/runner/instances/*/codexs.log || true
+
+  image:
+    name: Docker image
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=sha
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

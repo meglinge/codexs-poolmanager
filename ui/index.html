@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>poolmanager</title>
+<link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <form id="login-form" class="card">
+    <h1>poolmanager</h1>
+    <label>管理 Token<input type="password" id="login-token" autocomplete="current-password" autofocus></label>
+    <button type="submit" class="primary">登录</button>
+    <p id="login-error" class="error"></p>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <div class="brand">poolmanager <span id="meta" class="muted"></span></div>
+    <nav>
+      <a href="#overview" data-view="overview">总览</a>
+      <a href="#accounts" data-view="accounts">账号</a>
+      <a href="#keys" data-view="keys">API Key</a>
+      <a href="#runners" data-view="runners">Runner</a>
+      <a href="#usage" data-view="usage">用量</a>
+    </nav>
+    <button id="logout" class="ghost">退出</button>
+  </header>
+
+  <main>
+    <section id="view-overview" class="view">
+      <div class="stats" id="stats"></div>
+      <table class="table" id="overview-table">
+        <thead><tr><th>账号</th><th>状态</th><th>在途 / 上限</th><th>Runner</th><th>端口</th><th>错误</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="view-accounts" class="view">
+      <div class="toolbar"><button class="primary" id="account-new">新建账号</button></div>
+      <table class="table" id="accounts-table">
+        <thead><tr><th>名称</th><th>状态</th><th>Runner</th><th>端口</th><th>代理</th><th>并发</th><th>RPM</th><th>启用</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <pre id="account-logs" class="logs hidden"></pre>
+    </section>
+
+    <section id="view-keys" class="view">
+      <div class="toolbar"><button class="primary" id="key-new">新建 Key</button></div>
+      <div id="key-reveal" class="notice hidden"></div>
+      <table class="table" id="keys-table">
+        <thead><tr><th>名称</th><th>前缀</th><th>并发</th><th>RPM</th><th>启用</th><th>最近使用</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="view-runners" class="view">
+      <div class="toolbar"><button class="primary" id="runner-new">添加 Runner</button></div>
+      <table class="table" id="runners-table">
+        <thead><tr><th>ID</th><th>名称</th><th>控制地址</th><th>实例主机</th><th>在线</th><th>实例数</th><th>版本</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="view-usage" class="view">
+      <div class="toolbar">
+        <label>范围
+          <select id="usage-hours">
+            <option value="1">1 小时</option>
+            <option value="24" selected>24 小时</option>
+            <option value="168">7 天</option>
+            <option value="720">30 天</option>
+          </select>
+        </label>
+      </div>
+      <h3>按 API Key</h3>
+      <table class="table" id="usage-keys">
+        <thead><tr><th>Key</th><th>请求</th><th>错误</th><th>输入 tokens</th><th>输出 tokens</th><th>缓存 tokens</th><th>平均延迟</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h3>按账号</h3>
+      <table class="table" id="usage-accounts">
+        <thead><tr><th>账号</th><th>请求</th><th>错误</th><th>输入 tokens</th><th>输出 tokens</th><th>缓存 tokens</th><th>平均延迟</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h3>最近请求</h3>
+      <table class="table" id="usage-recent">
+        <thead><tr><th>时间</th><th>路径</th><th>状态</th><th>延迟</th><th>tokens (输入/输出/缓存)</th><th>错误</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+</div>
+
+<dialog id="dialog">
+  <form id="dialog-form" method="dialog" class="card">
+    <h2 id="dialog-title"></h2>
+    <div id="dialog-fields"></div>
+    <p id="dialog-error" class="error"></p>
+    <div class="actions">
+      <button type="button" class="ghost" id="dialog-cancel">取消</button>
+      <button type="submit" class="primary" id="dialog-ok">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/admin/app.js"></script>
+</body>
+</html>

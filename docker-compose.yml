@@ -1,0 +1,117 @@
+# poolmanager stack: HAProxy -> manager-a / manager-b (blue/green) ; runner
+# hosts the codexs instances ; Postgres + Redis hold all shared state.
+#
+#   cp .env.example .env && edit
+#   docker compose up -d
+#   open http://<host>:8800/admin
+#
+# Zero-downtime manager update (A/B):
+#   docker compose pull manager-a manager-b
+#   docker compose up -d --no-deps manager-a   # wait until healthy
+#   docker compose up -d --no-deps manager-b
+# Rollback = set IMAGE_TAG back in .env and repeat.
+
+x-manager: &manager
+  image: ${IMAGE}:${IMAGE_TAG:-latest}
+  restart: unless-stopped
+  command: ["serve"]
+  environment:
+    PM_DATABASE_URL: postgres://poolmanager:${POSTGRES_PASSWORD}@postgres:5432/poolmanager
+    PM_REDIS_URL: redis://redis:6379
+    PM_ADMIN_TOKEN: ${PM_ADMIN_TOKEN}
+    RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8800/healthz"]
+    interval: 10s
+    timeout: 3s
+    retries: 3
+    start_period: 10s
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: poolmanager
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: poolmanager
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poolmanager -d poolmanager"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  runner:
+    image: ${IMAGE}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["runner"]
+    environment:
+      PM_RUNNER_TOKEN: ${PM_RUNNER_TOKEN}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - runnerdata:/data/runner
+    # Codex's bwrap sandbox needs user namespaces inside the container.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    cap_add:
+      - SYS_ADMIN
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-H", "Authorization: Bearer ${PM_RUNNER_TOKEN}", "http://127.0.0.1:7000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  manager-a:
+    <<: *manager
+    environment:
+      PM_DATABASE_URL: postgres://poolmanager:${POSTGRES_PASSWORD}@postgres:5432/poolmanager
+      PM_REDIS_URL: redis://redis:6379
+      PM_ADMIN_TOKEN: ${PM_ADMIN_TOKEN}
+      PM_INSTANCE_ID: a
+      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+
+  manager-b:
+    <<: *manager
+    environment:
+      PM_DATABASE_URL: postgres://poolmanager:${POSTGRES_PASSWORD}@postgres:5432/poolmanager
+      PM_REDIS_URL: redis://redis:6379
+      PM_ADMIN_TOKEN: ${PM_ADMIN_TOKEN}
+      PM_INSTANCE_ID: b
+      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    restart: unless-stopped
+    ports:
+      - "${PUBLIC_PORT:-8800}:8800"
+      - "${STATS_PORT:-8404}:8404"
+    volumes:
+      - ./docker/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - manager-a
+      - manager-b
+
+volumes:
+  pgdata:
+  redisdata:
+  runnerdata:
