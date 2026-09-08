@@ -115,9 +115,30 @@ struct Lease {
 
 /// Pick a healthy account with free capacity and take an in-flight slot on it.
 #[allow(clippy::result_large_err)]
-async fn acquire_account(st: &AppState, pinned: Option<Uuid>) -> Result<Lease, Response> {
+async fn acquire_account(
+    st: &AppState,
+    pinned: Option<Uuid>,
+    accounting: bool,
+    excluded: &[Uuid],
+) -> Result<Lease, Response> {
     let snap = st.snapshot();
-    let eligible = |a: &Account| a.enabled && a.status == "running";
+    let eligible = |a: &Account| a.enabled && a.status == "running" && !excluded.contains(&a.id);
+
+    if !accounting {
+        // GET /v1/models and friends: any healthy account, no slot taken.
+        return match snap.accounts.iter().find(|a| eligible(a)) {
+            Some(a) => Ok(Lease {
+                account: a.clone(),
+                url: snap
+                    .instance_url(a)
+                    .ok_or_else(|| err(StatusCode::BAD_GATEWAY, "runner missing"))?,
+            }),
+            None => Err(err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no running Codex account",
+            )),
+        };
+    }
 
     if let Some(id) = pinned {
         match snap.account(id) {
@@ -268,73 +289,73 @@ async fn proxy(State(st): State<Arc<AppState>>, req: axum::extract::Request) -> 
 
     // GET /v1/models and friends: no capacity accounting, any running account.
     let accounting = parts.method == Method::POST;
-    let lease = if accounting {
-        let pinned = sticky_account(&st, &parts.headers, &json).await;
-        match acquire_account(&st, pinned).await {
+    let pinned = if accounting {
+        sticky_account(&st, &parts.headers, &json).await
+    } else {
+        None
+    };
+
+    // Forward; on a connection failure mark the account unhealthy right away
+    // (the health job will restart it) and, unless the conversation is pinned
+    // to that account, retry on another one.
+    let mut excluded: Vec<Uuid> = Vec::new();
+    let (lease, resp) = loop {
+        let lease = match acquire_account(&st, pinned, accounting, &excluded).await {
             Ok(l) => l,
             Err(r) => {
                 release_key();
                 return r;
             }
+        };
+        debug!(account = %lease.account.name, path = %path, "forwarding");
+        let mut upstream = st
+            .http
+            .request(parts.method.clone(), format!("{}{}", lease.url, path_q))
+            .body(body_bytes.clone());
+        for (name, value) in &parts.headers {
+            let n = name.as_str();
+            if n == "content-type" || n == "accept" || n.starts_with("x-asxs-") {
+                upstream = upstream.header(name, value);
+            }
         }
-    } else {
-        let snap = st.snapshot();
-        match snap
-            .accounts
-            .iter()
-            .find(|a| a.enabled && a.status == "running")
-        {
-            Some(a) => match snap.instance_url(a) {
-                Some(url) => Lease {
-                    account: a.clone(),
-                    url,
-                },
-                None => {
-                    release_key();
-                    return err(StatusCode::BAD_GATEWAY, "runner missing");
+        match upstream.send().await {
+            Ok(r) => break (lease, r),
+            Err(e) => {
+                warn!(account = %lease.account.name, "upstream request failed: {e}");
+                if accounting {
+                    let _ = st.cache.inflight_release("acct", lease.account.id).await;
                 }
-            },
-            None => {
-                release_key();
-                return err(StatusCode::SERVICE_UNAVAILABLE, "no running Codex account");
+                let retryable = !e.is_timeout() && !e.is_body() && !e.is_decode();
+                if retryable {
+                    let _ = db::set_account_status(
+                        &st.db,
+                        lease.account.id,
+                        "unhealthy",
+                        lease.account.pid,
+                        Some(&format!("gateway: {e}")),
+                    )
+                    .await;
+                    let _ = st.refresh().await;
+                }
+                excluded.push(lease.account.id);
+                if !retryable || pinned.is_some() || excluded.len() >= 3 {
+                    release_key();
+                    record_usage(
+                        &st,
+                        &key,
+                        Some(lease.account.id),
+                        &path,
+                        502,
+                        started,
+                        None,
+                        Some(e.to_string()),
+                    );
+                    return err(
+                        StatusCode::BAD_GATEWAY,
+                        format!("codexs instance unreachable: {e}"),
+                    );
+                }
             }
-        }
-    };
-    debug!(account = %lease.account.name, path = %path, "forwarding");
-
-    // Forward.
-    let mut upstream = st
-        .http
-        .request(parts.method.clone(), format!("{}{}", lease.url, path_q))
-        .body(body_bytes);
-    for (name, value) in &parts.headers {
-        let n = name.as_str();
-        if n == "content-type" || n == "accept" || n.starts_with("x-asxs-") {
-            upstream = upstream.header(name, value);
-        }
-    }
-    let resp = match upstream.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            warn!(account = %lease.account.name, "upstream request failed: {e}");
-            release_key();
-            if accounting {
-                let _ = st.cache.inflight_release("acct", lease.account.id).await;
-            }
-            record_usage(
-                &st,
-                &key,
-                Some(lease.account.id),
-                &path,
-                502,
-                started,
-                None,
-                Some(e.to_string()),
-            );
-            return err(
-                StatusCode::BAD_GATEWAY,
-                format!("codexs instance unreachable: {e}"),
-            );
         }
     };
 
