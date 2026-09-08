@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { MoreHorizontal, Plus, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { BarChart3, MoreHorizontal, Plus, RefreshCw, Wallet } from 'lucide-react'
 
 import {
   accountAction,
@@ -12,10 +12,15 @@ import {
   type Account,
   type AccountInput,
 } from '@/api/pool'
+import { getAccountsHealth, type AccountsHealth } from '@/api/usage'
 import { InlineLoader } from '@/components/PageLoader'
 import { FormField, FormSection } from '@/components/layout/FormScaffold'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
+import { AccountUsageDialog, type UsageTarget } from '@/components/pool/AccountUsageDialog'
+import { HealthBar } from '@/components/pool/HealthBar'
+import { QuotaCompact } from '@/components/pool/QuotaWindows'
 import { OnOff, StatusBadge } from '@/components/pool/StatusBadge'
+import { formatUSD } from '@/components/pool/usage/lib'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -34,6 +39,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { useConfirm } from '@/components/ui/use-confirm'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
+import { longWindowLabel } from '@/lib/quota'
+import { formatCompact } from '@/lib/usage-format'
 import { cn } from '@/lib/utils'
 import { useResource } from '@/lib/use-resource'
 
@@ -47,6 +54,8 @@ interface Draft {
   auth_json: string
   enabled: boolean
 }
+
+const HEALTH_REFRESH_MS = 30_000
 
 function nextPort(accounts: Account[]): number {
   const used = new Set(accounts.map((a) => a.port))
@@ -93,6 +102,38 @@ function toInput(draft: Draft, creating: boolean): AccountInput {
   }
 }
 
+/** 成本列:上行是网关自己按价格表估的,只含经本网关的请求;下行琥珀色是官方结算,含官方客户端的消耗。 */
+function BilledCell({ account, health, onOpenOfficial }: { account: Account; health: AccountsHealth | null; onOpenOfficial: () => void }) {
+  const c = health?.counters[account.id]
+  const o = health?.official[account.id]
+  const quota = health?.quota[account.id]
+  const perUsd = health?.credits_per_usd || 25
+  const longLabel = longWindowLabel(quota)
+  const has5h = quota?.primary_window_seconds != null && quota.primary_window_seconds <= 6 * 3600
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <span
+        className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground ring-1 ring-inset ring-border/70"
+        title="网关按内置价格表估算,只含经本网关转发的请求"
+      >
+        <Wallet className="h-3 w-3" />
+        {c ? `${has5h ? `5h: $${c.cost_5h.toFixed(2)} / ` : ''}7d: $${c.cost_7d.toFixed(2)}` : '—'}
+      </span>
+      <button
+        type="button"
+        onClick={onOpenOfficial}
+        className={cn(
+          'inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium tabular-nums ring-1 ring-inset ring-amber-500/20',
+          o ? 'text-amber-700 dark:text-amber-400' : 'text-amber-700/70 dark:text-amber-400/70',
+        )}
+        title={o ? `官方结算(本地同步过 ${o.days} 天的记录),点击查看明细` : '官方还没有结算数据,点击查看'}
+      >
+        官方 {o ? `${longLabel}: ${formatUSD(o.credits_7d / perUsd)} · 总 ${formatUSD(o.credits / perUsd)}` : '—'}
+      </button>
+    </div>
+  )
+}
+
 export default function Accounts() {
   const { showToast } = useGlobalToast()
   const confirm = useConfirm()
@@ -103,9 +144,36 @@ export default function Accounts() {
   const [formError, setFormError] = useState('')
   const [logs, setLogs] = useState<{ name: string; text: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [usage, setUsage] = useState<UsageTarget | null>(null)
+  const [health, setHealth] = useState<AccountsHealth | null>(null)
+  const [now, setNow] = useState(() => Date.now())
 
   const runnerList = runners.data ?? []
   const list = accounts.data ?? []
+
+  const loadHealth = useCallback(() => {
+    getAccountsHealth()
+      .then((h) => {
+        setHealth(h)
+        setNow(Date.now())
+      })
+      .catch(() => {
+        /* 健康条只是辅助信息,失败不打扰列表 */
+      })
+  }, [])
+
+  useEffect(() => {
+    loadHealth()
+    const t = window.setInterval(() => {
+      if (!document.hidden) loadHealth()
+    }, HEALTH_REFRESH_MS)
+    return () => window.clearInterval(t)
+  }, [loadHealth])
+
+  const refreshAll = () => {
+    accounts.refresh()
+    loadHealth()
+  }
 
   const openEditor = (account: Account | null) => {
     if (!runnerList.length) {
@@ -179,11 +247,11 @@ export default function Accounts() {
   return (
     <PageShell
       title="账号"
-      description="每个账号对应一个独立的 codexs 实例,有自己的端口和出口代理。启用后由后台自动拉起。"
-      width="7xl"
+      description="每个账号对应一个独立的 codexs 实例,有自己的端口和出口代理。健康条与官方额度每 30 秒刷新。"
+      width="full"
       actions={
         <>
-          <Button type="button" variant="outline" className="gap-2" onClick={accounts.refresh} disabled={accounts.loading}>
+          <Button type="button" variant="outline" className="gap-2" onClick={refreshAll} disabled={accounts.loading}>
             <RefreshCw className={cn('h-4 w-4', accounts.loading && 'animate-spin')} />
             刷新
           </Button>
@@ -210,56 +278,80 @@ export default function Accounts() {
                 <TableRow>
                   <TableHead>名称</TableHead>
                   <TableHead>状态</TableHead>
-                  <TableHead>Runner</TableHead>
-                  <TableHead>端口</TableHead>
-                  <TableHead className="text-right">并发 / RPM</TableHead>
-                  <TableHead>启用</TableHead>
+                  <TableHead>健康(3.3h)</TableHead>
+                  <TableHead>官方额度</TableHead>
+                  <TableHead>成本</TableHead>
+                  <TableHead className="text-right">请求(7d)</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {list.length ? (
-                  list.map((account) => (
-                    <TableRow key={account.id}>
-                      <TableCell>
-                        <div className="font-medium">{account.name}</div>
-                        <div className="max-w-[28ch] truncate font-mono text-xs text-muted-foreground" title={account.proxy_url ?? ''}>
-                          {account.proxy_url || '直连'}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={account.status} />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">{account.runner_id}</TableCell>
-                      <TableCell className="font-mono text-xs">{account.port}</TableCell>
-                      <TableCell className="whitespace-nowrap text-right tabular-nums">
-                        {account.max_concurrency} / {account.rpm_limit ?? '∞'}
-                      </TableCell>
-                      <TableCell>
-                        <OnOff on={account.enabled} />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-right">
-                        <div className="inline-flex items-center gap-1">
-                          <Button size="sm" variant="ghost" onClick={() => showLogs(account)}>日志</Button>
-                          <Button size="sm" variant="ghost" onClick={() => openEditor(account)}>编辑</Button>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button size="icon" variant="ghost" className="h-8 w-8" disabled={busy === account.id} aria-label="更多操作">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onSelect={() => act(account, 'start')}>启动</DropdownMenuItem>
-                              <DropdownMenuItem onSelect={() => act(account, 'restart')}>重启</DropdownMenuItem>
-                              <DropdownMenuItem onSelect={() => act(account, 'stop')}>停止</DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => remove(account)}>删除</DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  list.map((account) => {
+                    const c = health?.counters[account.id]
+                    return (
+                      <TableRow key={account.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{account.name}</span>
+                            {!account.enabled ? <OnOff on={false} /> : null}
+                          </div>
+                          <div className="max-w-[30ch] truncate font-mono text-xs text-muted-foreground" title={`${account.runner_id}:${account.port} · ${account.proxy_url || '直连'} · 并发 ${account.max_concurrency} / RPM ${account.rpm_limit ?? '∞'}`}>
+                            {account.runner_id}:{account.port} · {account.proxy_url || '直连'} · {account.max_concurrency}/{account.rpm_limit ?? '∞'}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge status={account.status} />
+                          {health?.quota[account.id]?.plan_type ? <div className="mt-0.5 text-[11px] text-muted-foreground">{health.quota[account.id].plan_type}</div> : null}
+                        </TableCell>
+                        <TableCell>
+                          <HealthBar buckets={health?.health[account.id]} count={health?.buckets ?? 20} minutes={health?.bucket_minutes ?? 10} now={now} />
+                        </TableCell>
+                        <TableCell>
+                          <QuotaCompact quota={health?.quota[account.id]} now={now} />
+                        </TableCell>
+                        <TableCell>
+                          <BilledCell account={account} health={health} onOpenOfficial={() => setUsage({ id: account.id, name: account.name, tab: 'official' })} />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          {c ? (
+                            <>
+                              <span className="font-semibold">{formatCompact(c.requests_7d)}</span>
+                              <span className={cn('ml-1 text-xs', c.errors_7d > 0 ? 'text-destructive' : 'text-muted-foreground')}>/ {c.errors_7d} 错</span>
+                              <div className="text-[11px] text-muted-foreground">{formatCompact(c.tokens_7d)} tok</div>
+                            </>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">0</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right">
+                          <div className="inline-flex items-center gap-1">
+                            <Button size="sm" variant="ghost" className="gap-1" onClick={() => setUsage({ id: account.id, name: account.name, tab: 'overview' })}>
+                              <BarChart3 className="h-3.5 w-3.5" />
+                              用量
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => openEditor(account)}>编辑</Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button size="icon" variant="ghost" className="h-8 w-8" disabled={busy === account.id} aria-label="更多操作">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onSelect={() => showLogs(account)}>实例日志</DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onSelect={() => act(account, 'start')}>启动</DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => act(account, 'restart')}>重启</DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => act(account, 'stop')}>停止</DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => remove(account)}>删除</DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
                 ) : (
                   <TableRow>
                     <TableCell colSpan={7}>
@@ -281,6 +373,8 @@ export default function Accounts() {
           <pre className="max-h-[440px] overflow-auto whitespace-pre-wrap px-5 py-4 font-mono text-xs leading-5">{logs.text}</pre>
         </PageSurface>
       ) : null}
+
+      <AccountUsageDialog target={usage} onClose={() => setUsage(null)} />
 
       <Dialog open={Boolean(editing)} onOpenChange={(open) => (!open ? setEditing(null) : null)}>
         <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">

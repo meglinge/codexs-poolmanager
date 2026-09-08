@@ -51,6 +51,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/runners/{id}", axum::routing::delete(delete_runner))
         .route("/usage/summary", get(usage_summary))
         .route("/usage/recent", get(usage_recent))
+        .merge(crate::admin_usage::routes())
         .route("/logout", post(logout))
         .route("/auth/logout", post(auth_logout))
         .route("/auth/status", get(auth_status))

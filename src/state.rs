@@ -22,6 +22,8 @@ pub struct AppState {
     pub cache: Cache,
     pub http: reqwest::Client,
     pub runners: RunnerClient,
+    /// Official ChatGPT usage endpoints, one client per outbound proxy.
+    pub wham: crate::wham::WhamClient,
     control: reqwest::Client,
     /// Routing snapshot refreshed by `refresh_loop`, so the hot path never
     /// waits on Postgres.
@@ -67,6 +69,7 @@ impl AppState {
             cache,
             http,
             runners: RunnerClient::new(control.clone()),
+            wham: crate::wham::WhamClient::default(),
             control,
             snapshot: RwLock::new(Arc::new(Snapshot::default())),
         });
