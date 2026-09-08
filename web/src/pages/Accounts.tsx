@@ -231,7 +231,7 @@ export default function Accounts() {
                         <OnOff on={account.enabled} />
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right">
-                        <div className="flex justify-end gap-1">
+                        <div className="inline-flex gap-1">
                           <Button size="sm" variant="ghost" disabled={busy === account.id} onClick={() => act(account, 'start')}>启动</Button>
                           <Button size="sm" variant="ghost" disabled={busy === account.id} onClick={() => act(account, 'restart')}>重启</Button>
                           <Button size="sm" variant="ghost" disabled={busy === account.id} onClick={() => act(account, 'stop')}>停止</Button>

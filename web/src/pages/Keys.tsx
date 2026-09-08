@@ -171,8 +171,8 @@ export default function Keys() {
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                         {key.last_used_at ? formatDateTime(key.last_used_at) : '—'}
                       </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
+                      <TableCell className="whitespace-nowrap text-right">
+                        <div className="inline-flex gap-1">
                           <Button size="sm" variant="ghost" onClick={() => { setFormError(''); setEditing({ key, draft: toDraft(key) }) }}>编辑</Button>
                           <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => remove(key)}>删除</Button>
                         </div>

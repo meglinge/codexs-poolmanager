@@ -132,8 +132,8 @@ export default function Runners() {
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{runner.instances ?? '—'}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{runner.runner_version || '—'}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
+                      <TableCell className="whitespace-nowrap text-right">
+                        <div className="inline-flex gap-1">
                           <Button size="sm" variant="ghost" onClick={() => { setFormError(''); setEditing({ runner, draft: toDraft(runner) }) }}>编辑</Button>
                           <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => remove(runner)}>删除</Button>
                         </div>
