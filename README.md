@@ -102,9 +102,11 @@ python3 deploy/abctl.py runner latest # roll the runner (its instances restart o
 
 The published image downloads `codexs` from a GitHub release, which is slow
 when iterating on the codexs patch. On a host that has the Codex fork checked
-out (`git clone -b codexs https://github.com/meglinge/codex ~/src/codex`) and
-a Rust toolchain, `scripts/codexs-local-runner.sh` builds `codexs` from that
-checkout, layers it over the current runner image
+out (`git clone -b codexs https://github.com/meglinge/codex ~/src/codex`),
+`scripts/codexs-local-runner.sh` builds `codexs` from that checkout inside a
+Debian bookworm builder container (`docker/Dockerfile.codexs-builder`, same
+glibc as the runner image — a host build on a newer distro would not start in
+the container), layers it over the current runner image
 (`docker/Dockerfile.runner-local`) and rolls the runner:
 
 ```

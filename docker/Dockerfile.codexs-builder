@@ -1,0 +1,10 @@
+# Build environment for codexs that matches the runner image's glibc (Debian
+# bookworm). Building on the host would link against the host's newer glibc
+# and the binary would not start inside the runner container.
+ARG RUST_IMAGE=rust:1.95.0-bookworm
+FROM ${RUST_IMAGE}
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      binutils pkg-config libcap-dev python3 ca-certificates curl git \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src/codex-rs
