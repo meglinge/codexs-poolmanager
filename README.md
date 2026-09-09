@@ -98,6 +98,26 @@ python3 deploy/abctl.py resume        # continue an interrupted operation from i
 python3 deploy/abctl.py runner latest # roll the runner (its instances restart once)
 ```
 
+### Runner with a locally built codexs (no GitHub release round-trip)
+
+The published image downloads `codexs` from a GitHub release, which is slow
+when iterating on the codexs patch. On a host that has the Codex fork checked
+out (`git clone -b codexs https://github.com/meglinge/codex ~/src/codex`) and
+a Rust toolchain, `scripts/codexs-local-runner.sh` builds `codexs` from that
+checkout, layers it over the current runner image
+(`docker/Dockerfile.runner-local`) and rolls the runner:
+
+```
+scripts/codexs-local-runner.sh              # build the checked-out commit, roll runner
+scripts/codexs-local-runner.sh origin/codexs   # fetch + checkout a ref first
+CODEX_SRC=~/src/codex BASE_IMAGE=ghcr.io/meglinge/codexs-poolmanager:sha-8f59e84 scripts/codexs-local-runner.sh
+```
+
+The result is tagged `codexs-poolmanager-runner:<base sha>-codexs-<codex sha>`
+(immutable, so `abctl` accepts it and can roll back to it); `abctl` does not
+try to pull images that only exist locally. A release build takes ~14 min the
+first time and a few minutes incrementally.
+
 `deploy` = pull the image → recreate the standby slot → wait for
 `/readyz` + HAProxy UP → mark the new slot active in Redis and wait until the
 old slot released the leader lock → flip the HAProxy map (no reload) → wait

@@ -1,0 +1,10 @@
+# Runner image with a locally built codexs layered over a published image.
+# Build context: a directory holding `codexs` (and optionally the helper
+# binaries `codex-code-mode-host`, `bwrap`) — see scripts/codexs-local-runner.sh.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+USER root
+COPY --chmod=0755 codexs /opt/codexs/codexs
+COPY --chmod=0755 helpers/ /opt/codexs/
+RUN /opt/codexs/codexs --version
+USER pm

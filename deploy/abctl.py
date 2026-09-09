@@ -574,12 +574,23 @@ class Controller:
                 raise DeployError(f"等待超时({timeout}s):{description}")
             self.sleep(3)
 
+    def pull_image(self, image):
+        """registry 镜像拉取;本机构建的镜像(名字里没有 registry 主机,且本地存在)直接用。"""
+        first = image.split("/", 1)[0]
+        has_registry = "." in first or ":" in first or first == "localhost"
+        if not has_registry:
+            local = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
+            if local.returncode == 0:
+                self.log(f"本地镜像 {image},不拉取")
+                return
+        self.log(f"拉取镜像 {image}")
+        self.run(["docker", "pull", image])
+
     # ---- 原子步骤 ----
     def prepare(self, candidate, image):
         """把 image 装进 candidate 槽并等它就绪(不接流)。"""
         self.journal(stage="preparing", candidate=candidate, image=image)
-        self.log(f"拉取镜像 {image}")
-        self.run(["docker", "pull", image])
+        self.pull_image(image)
         images = self.read_images()
         images[candidate] = image
         self.write_images(images)
@@ -680,8 +691,7 @@ class Controller:
     def runner(self, image):
         """滚动 runner:它托管的 codexs 实例会重启一次,由活动槽的后台任务拉回。"""
         validate_image(image)
-        self.log(f"拉取镜像 {image}")
-        self.run(["docker", "pull", image])
+        self.pull_image(image)
         images = self.read_images()
         images["runner"] = image
         self.write_images(images)
@@ -780,6 +790,8 @@ class Controller:
             return rel["latest"]["image"]
         if SHA_RE.match(spec):
             return f"{IMAGE_REPO}:{TAG_PREFIX}{spec}"
+        if spec.startswith(TAG_PREFIX) and SHA_RE.match(spec[len(TAG_PREFIX):]):
+            return f"{IMAGE_REPO}:{spec}"
         return spec
 
     # ---- 状态 ----
@@ -1000,6 +1012,8 @@ def main(argv=None):
             return rel["latest"]["image"]
         if SHA_RE.match(spec):
             return f"{IMAGE_REPO}:{TAG_PREFIX}{spec}"
+        if spec.startswith(TAG_PREFIX) and SHA_RE.match(spec[len(TAG_PREFIX):]):
+            return f"{IMAGE_REPO}:{spec}"
         return spec
 
     if a.cmd == "deploy":
