@@ -81,6 +81,8 @@ services:
     command: ["runner"]
     environment:
       PM_RUNNER_TOKEN: ${PM_RUNNER_TOKEN}
+      # debug: codexs instances dump every incoming/outgoing request body here (empty = off)
+      CODEXS_DUMP_REQUESTS_DIR: ${CODEXS_DUMP_REQUESTS_DIR:-}
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       - runnerdata:/data/runner
