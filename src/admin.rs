@@ -52,6 +52,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/usage/summary", get(usage_summary))
         .route("/usage/recent", get(usage_recent))
         .merge(crate::admin_usage::routes())
+        .merge(crate::admin_deploy::routes())
         .route("/logout", post(logout))
         .route("/auth/logout", post(auth_logout))
         .route("/auth/status", get(auth_status))

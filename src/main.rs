@@ -6,6 +6,7 @@
 //!   poolmanager runner  -- starts/stops codexs processes on a host
 
 mod admin;
+mod admin_deploy;
 mod admin_usage;
 mod cache;
 mod config;
@@ -80,6 +81,7 @@ async fn serve(cfg: config::ServeConfig) -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
         .with_state(Arc::clone(&state))
         .merge(gateway::router(Arc::clone(&state)))
         .merge(admin::router(Arc::clone(&state)))
@@ -105,4 +107,26 @@ async fn healthz(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
         "redis": redis_ok,
         "db": db_ok,
     }))
+}
+
+/// HAProxy / compose readiness: 503 unless Postgres and Redis both answer.
+/// (`/healthz` is liveness and always 200 with the details.)
+async fn readyz(State(st): State<Arc<AppState>>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let redis_ok = st.cache.ping().await.is_ok();
+    let db_ok = sqlx::query("SELECT 1").execute(&st.db).await.is_ok();
+    let active = st.cache.active_slot().await.ok().flatten();
+    let body = Json(serde_json::json!({
+        "ok": redis_ok && db_ok,
+        "instance": st.cfg.instance_id,
+        "active_slot": active,
+        "version": env!("CARGO_PKG_VERSION"),
+        "redis": redis_ok,
+        "db": db_ok,
+    }));
+    if redis_ok && db_ok {
+        body.into_response()
+    } else {
+        (axum::http::StatusCode::SERVICE_UNAVAILABLE, body).into_response()
+    }
 }

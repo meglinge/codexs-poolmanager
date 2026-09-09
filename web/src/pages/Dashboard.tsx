@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LogOut,
   PanelLeft,
+  Rocket,
   Server,
   Users,
   Waves,
@@ -27,6 +28,7 @@ const Accounts = lazy(() => import('@/pages/Accounts'))
 const Keys = lazy(() => import('@/pages/Keys'))
 const Runners = lazy(() => import('@/pages/Runners'))
 const Usage = lazy(() => import('@/pages/Usage'))
+const Deployment = lazy(() => import('@/pages/Deployment'))
 
 /**
  * 应用外壳:侧栏导航 + 顶栏 + 内容区。
@@ -36,7 +38,7 @@ const Usage = lazy(() => import('@/pages/Usage'))
  * 真要做深链接/多级路由时,把 `currentPage` 状态换成 router 即可,其余结构不动。
  */
 
-type Page = 'overview' | 'accounts' | 'keys' | 'runners' | 'usage'
+type Page = 'overview' | 'accounts' | 'keys' | 'runners' | 'usage' | 'deployment'
 
 interface NavItem {
   key: Page
@@ -50,6 +52,7 @@ const navItems: NavItem[] = [
   { key: 'keys', label: 'API key', icon: KeyRound },
   { key: 'runners', label: 'Runner', icon: Server },
   { key: 'usage', label: '用量', icon: Activity },
+  { key: 'deployment', label: '部署', icon: Rocket },
 ]
 
 const PAGE_STORAGE_KEY = nsKey('last-page')
@@ -257,6 +260,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                     {currentPage === 'keys' ? <Keys /> : null}
                     {currentPage === 'runners' ? <Runners /> : null}
                     {currentPage === 'usage' ? <Usage /> : null}
+                    {currentPage === 'deployment' ? <Deployment /> : null}
                   </motion.div>
                 </Suspense>
               </ChunkLoadBoundary>

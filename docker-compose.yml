@@ -1,36 +1,49 @@
-# poolmanager stack: HAProxy -> manager-a / manager-b (blue/green) ; runner
-# hosts the codexs instances ; Postgres + Redis hold all shared state.
+# poolmanager stack: HAProxy -> manager-a | manager-b (Android-style A/B
+# slots: both always up, only ONE receives traffic and runs the background
+# jobs) ; runner hosts the codexs instances ; Postgres + Redis hold all state ;
+# deployment is the control service that performs releases.
 #
 #   cp .env.example .env && edit
-#   docker compose up -d
-#   open http://<host>:8800/admin
+#   mkdir -p deploy/state
+#   docker compose up -d postgres redis haproxy deployment
+#   python3 deploy/abctl.py deploy latest     # first time: both slots get the image, slot a active
+#   python3 deploy/abctl.py runner latest
+#   open http://<host>:8800/admin  (the 部署 page does the same as abctl)
 #
-# Zero-downtime manager update (A/B):
-#   docker compose pull manager-a manager-b
-#   docker compose up -d --no-deps manager-a   # wait until healthy
-#   docker compose up -d --no-deps manager-b
-# Rollback = set IMAGE_TAG back in .env and repeat.
+# Release = new image into the standby slot -> ready -> hand over background
+# jobs -> flip HAProxy -> wait for the old slot's streams to finish -> rebuild
+# the old slot with ITS previous image (= rollback point).
+#   python3 deploy/abctl.py status | deploy <image|sha|latest> | rollback | switch a|b | resume | runner <image|sha|latest>
+#
+# Images per slot/runner live in deploy/state/images.json (abctl maintains it);
+# for a manual `docker compose up` add `--env-file .env --env-file deploy/state/images.env`.
+# Without abctl the SLOT_*_IMAGE / RUNNER_IMAGE variables fall back to IMAGE:IMAGE_TAG.
 
 x-manager: &manager
-  image: ${IMAGE}:${IMAGE_TAG:-latest}
   restart: unless-stopped
   command: ["serve"]
-  environment:
-    PM_DATABASE_URL: postgres://poolmanager:${POSTGRES_PASSWORD}@postgres:5432/poolmanager
-    PM_REDIS_URL: redis://redis:6379
-    PM_ADMIN_TOKEN: ${PM_ADMIN_TOKEN}
-    RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+  # The old slot keeps serving in-flight streams after a switch; abctl waits for
+  # them to drain before recreating it, this is only the hard cap.
+  stop_grace_period: ${PM_STOP_GRACE:-30m}
   depends_on:
     postgres:
       condition: service_healthy
     redis:
       condition: service_healthy
   healthcheck:
-    test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8800/healthz"]
+    test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8800/readyz"]
     interval: 10s
     timeout: 3s
     retries: 3
     start_period: 10s
+
+x-manager-env: &manager-env
+  PM_DATABASE_URL: postgres://poolmanager:${POSTGRES_PASSWORD}@postgres:5432/poolmanager
+  PM_REDIS_URL: redis://redis:6379
+  PM_ADMIN_TOKEN: ${PM_ADMIN_TOKEN}
+  PM_DEPLOY_URL: http://deployment:16828
+  PM_DEPLOY_TOKEN: ${PM_DEPLOY_TOKEN:-}
+  RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
 
 services:
   postgres:
@@ -60,8 +73,10 @@ services:
       timeout: 3s
       retries: 10
 
+  # Not slotted: rolled separately (its codexs instances restart once and are
+  # brought back by the reconciliation job).
   runner:
-    image: ${IMAGE}:${IMAGE_TAG:-latest}
+    image: ${RUNNER_IMAGE:-${IMAGE}:${IMAGE_TAG:-latest}}
     restart: unless-stopped
     command: ["runner"]
     environment:
@@ -83,21 +98,17 @@ services:
 
   manager-a:
     <<: *manager
+    image: ${SLOT_A_IMAGE:-${IMAGE}:${IMAGE_TAG:-latest}}
     environment:
-      PM_DATABASE_URL: postgres://poolmanager:${POSTGRES_PASSWORD}@postgres:5432/poolmanager
-      PM_REDIS_URL: redis://redis:6379
-      PM_ADMIN_TOKEN: ${PM_ADMIN_TOKEN}
+      <<: *manager-env
       PM_INSTANCE_ID: a
-      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
 
   manager-b:
     <<: *manager
+    image: ${SLOT_B_IMAGE:-${IMAGE}:${IMAGE_TAG:-latest}}
     environment:
-      PM_DATABASE_URL: postgres://poolmanager:${POSTGRES_PASSWORD}@postgres:5432/poolmanager
-      PM_REDIS_URL: redis://redis:6379
-      PM_ADMIN_TOKEN: ${PM_ADMIN_TOKEN}
+      <<: *manager-env
       PM_INSTANCE_ID: b
-      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
 
   haproxy:
     image: haproxy:2.9-alpine
@@ -105,11 +116,45 @@ services:
     ports:
       - "${PUBLIC_PORT:-8800}:8800"
       - "${STATS_PORT:-8404}:8404"
+      # Admin socket for `abctl --direct` on the host; the deployment service uses haproxy:9999.
+      - "127.0.0.1:${PM_HAPROXY_ADMIN_PORT:-8405}:9999"
     volumes:
       - ./docker/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./deploy/state:/etc/haproxy/state
+    # Backends resolve by Docker DNS; a slot that is down is just DOWN.
     depends_on:
-      - manager-a
-      - manager-b
+      - redis
+
+  # Deployment control service: the only thing that flips slots. It holds
+  # docker.sock (= host root), so it listens on the compose network and host
+  # 127.0.0.1 only, accepts one bearer token and a fixed set of actions.
+  # The repo is mounted read-only at the same absolute path (compose bind
+  # paths must match the host); deploy/state is writable.
+  deployment:
+    build:
+      context: ./deploy
+      dockerfile: control.Dockerfile
+    image: codexs-poolmanager-deployment:1
+    restart: unless-stopped
+    working_dir: ${DEPLOY_ROOT:-${PWD}}
+    environment:
+      DEPLOY_TOKEN: ${PM_DEPLOY_TOKEN:?set PM_DEPLOY_TOKEN (long random)}
+      DEPLOY_PORT: "16828"
+      HAPROXY_ADMIN: haproxy:9999
+      DEPLOY_TIMEOUT: ${DEPLOY_TIMEOUT:-600}
+      DEPLOY_DRAIN_WAIT: ${DEPLOY_DRAIN_WAIT:-1800}
+      IMAGE_REPO: ${IMAGE:-ghcr.io/meglinge/codexs-poolmanager}
+      GITHUB_TOKEN: ${PM_GITHUB_TOKEN:-}
+    ports:
+      - "127.0.0.1:${PM_DEPLOY_PORT:-16828}:16828"
+    volumes:
+      - .:${DEPLOY_ROOT:-${PWD}}:ro
+      - ./deploy/state:${DEPLOY_ROOT:-${PWD}}/deploy/state
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Private registries: reuse the host's `docker login` credentials.
+      - ${DOCKER_CONFIG_JSON:-~/.docker/config.json}:/root/.docker/config.json:ro
+    depends_on:
+      - haproxy
 
 volumes:
   pgdata:

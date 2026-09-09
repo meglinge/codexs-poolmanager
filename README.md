@@ -45,16 +45,23 @@ clients ──► HAProxy ──► manager-a / manager-b ──► codexs :8790
   (React 19 / Vite / Tailwind / shadcn) in `web/`, compiled into the binary.
   Single admin token; the login exchanges it for a session token, and the
   admin token itself also works as `Authorization: Bearer` for scripts.
-* **Blue/green**: two manager replicas behind HAProxy; update one at a time.
-  Background jobs (health checks, reconciliation, auth.json sync, usage
-  pruning) run on whichever replica holds the Redis leader lock.
+* **A/B slots (Android-style)**: two manager replicas behind HAProxy, both
+  always up, but only the *active* slot receives traffic and runs the
+  background jobs (health checks, reconciliation, auth.json sync, official
+  usage probes, pruning); the standby is a hot spare holding the previous
+  version. A `deployment` control service performs releases as a resumable
+  stage machine; the 部署 page and `deploy/abctl.py` drive it, and versions
+  are detected straight from ghcr (`sha-<sha>` tags, commit subject from
+  image labels).
 
 ## Quick start (docker compose)
 
 ```
 git clone https://github.com/meglinge/codexs-poolmanager.git && cd codexs-poolmanager
-cp .env.example .env            # set PM_ADMIN_TOKEN, PM_RUNNER_TOKEN, POSTGRES_PASSWORD
-docker compose up -d
+cp .env.example .env            # set PM_ADMIN_TOKEN, PM_RUNNER_TOKEN, POSTGRES_PASSWORD, PM_DEPLOY_TOKEN
+docker compose up -d postgres redis haproxy deployment
+python3 deploy/abctl.py deploy latest   # first time: both slots get the newest sha-<sha> image, slot a active
+python3 deploy/abctl.py runner latest
 open http://localhost:8800/admin
 ```
 
@@ -74,19 +81,36 @@ curl http://localhost:8800/v1/responses \
   -d '{"model":"gpt-5","input":"hello","stream":true}'
 ```
 
-### Updating the managers (A/B, no downtime)
+### Releases (A/B slots, no downtime)
+
+Two slots `manager-a` / `manager-b` are always running. HAProxy sends every
+request to the slot named in the runtime map `deploy/state/active.map`
+(`main manager_a|manager_b`); the other slot is ready but idle and does not
+compete for the background-job leader lock (Redis key `pm:deploy:active`).
 
 ```
-# .env: IMAGE_TAG=<new version>
-docker compose pull manager-a manager-b
-docker compose up -d --no-deps manager-a      # HAProxy drops it while restarting, B keeps serving
-docker compose up -d --no-deps manager-b
+python3 deploy/abctl.py status        # slots, images, who has traffic / the leader lock
+python3 deploy/abctl.py releases      # sha-<sha> images on ghcr, build time, commit subject, where each runs
+python3 deploy/abctl.py deploy latest # or a short sha, or a full image name
+python3 deploy/abctl.py rollback      # seconds: flip back to the standby slot (previous version)
+python3 deploy/abctl.py switch b      # pure traffic switch, versions untouched
+python3 deploy/abctl.py resume        # continue an interrupted operation from its journal
+python3 deploy/abctl.py runner latest # roll the runner (its instances restart once)
 ```
 
-Rollback: put the previous `IMAGE_TAG` back and repeat. The runner and its
-codexs processes are untouched by manager updates; update the runner
-separately when a new codexs version is needed (its instances restart and are
-brought back by the reconciliation job).
+`deploy` = pull the image → recreate the standby slot → wait for
+`/readyz` + HAProxy UP → mark the new slot active in Redis and wait until the
+old slot released the leader lock → flip the HAProxy map (no reload) → wait
+until the old slot's in-flight streams drain (never killed; on timeout the
+operation parks at `cutover` and `resume` keeps waiting) → recreate the old
+slot with **its previous image** (= rollback point). Every stage is journaled
+in `deploy/state/operation.json`. Only immutable tags are accepted
+(`latest` is refused). The 部署 page in the admin UI offers the same actions
+(发布最新版本 / 安全切到 A|B / 回滚 / 继续未完成操作 / runner 滚到最新); the
+managers proxy them to the `deployment` container with `PM_DEPLOY_TOKEN`, so
+the token never reaches the browser.
+
+`deploy/state` must live on persistent storage; never delete it to "reset".
 
 ## Configuration
 
@@ -103,6 +127,8 @@ brought back by the reconciliation job).
 | `--sticky-ttl-secs` | `PM_STICKY_TTL_SECS` | `21600` |
 | `--health-interval-secs` | `PM_HEALTH_INTERVAL_SECS` | `15` |
 | `--usage-retention-days` | `PM_USAGE_RETENTION_DAYS` | `30` |
+| `--deploy-url` | `PM_DEPLOY_URL` | unset (部署 page disabled) |
+| `--deploy-token` | `PM_DEPLOY_TOKEN` | unset |
 
 `poolmanager runner`:
 
@@ -135,6 +161,12 @@ brought back by the reconciliation job).
   User-Agent used for those calls.
 * The runner keeps children only in memory: restarting the runner container
   restarts every instance (the reconciliation job brings them back).
+* `/readyz` (Postgres + Redis reachable) is what HAProxy and the compose
+  healthchecks use; `/healthz` is liveness and always 200 with details.
+* Compose env for the deployment service: `PM_DEPLOY_TOKEN` (required),
+  `DEPLOY_ROOT` (absolute compose dir on the host), `DEPLOY_TIMEOUT` /
+  `DEPLOY_DRAIN_WAIT`, `PM_GITHUB_TOKEN` (optional commit subjects for old
+  images), `PM_HAPROXY_ADMIN_PORT` / `PM_DEPLOY_PORT` (host 127.0.0.1 only).
 * Codex's sandbox uses `bwrap`; in Docker the runner needs user namespaces
   (`security_opt: seccomp=unconfined`, `cap_add: SYS_ADMIN` in the compose file).
 
@@ -148,6 +180,8 @@ PM_RUNNER_TOKEN=y PM_CODEXS_BIN=/path/to/codexs cargo run -- runner
 (cd web && npm run dev)                  # UI dev server on :5278, proxies /admin/api to :8800
 ```
 
-CI runs fmt/clippy/tests plus an end-to-end smoke test against real Postgres
-and Redis with a stub codexs, then publishes
-`ghcr.io/meglinge/codexs-poolmanager` (`latest` from `main`, semver from `v*` tags).
+CI runs fmt/clippy/tests, `deploy/test_abctl.py`, and an end-to-end smoke test
+against real Postgres and Redis with a stub codexs, then publishes
+`ghcr.io/meglinge/codexs-poolmanager` (`sha-<sha7>` for every main commit,
+`latest` from `main`, semver from `v*` tags) with the commit subject/author in
+the image labels `pm.commit.subject` / `pm.commit.author`.

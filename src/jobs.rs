@@ -12,22 +12,51 @@ use crate::control;
 use crate::db;
 use crate::state::AppState;
 
+/// Is this replica's slot the active one? Absent marker = no A/B distinction.
+pub async fn slot_active(st: &AppState) -> bool {
+    match st.cache.active_slot().await {
+        Ok(Some(active)) => active == st.cfg.instance_id,
+        _ => true,
+    }
+}
+
 pub fn spawn(st: Arc<AppState>) {
     tokio::spawn(async move {
         let interval = Duration::from_secs(st.cfg.health_interval_secs.max(5));
+        // Holder is `<slot>-<pid>`: the deployment controller reads the slot
+        // prefix to know which replica still leads while it quiesces.
         let holder = format!("{}-{}", st.cfg.instance_id, std::process::id());
         let mut ticks: u64 = 0;
+        let mut was_leader = false;
         loop {
+            // A/B (Android-style single active slot): the standby replica
+            // stays up and ready but never competes for the leader lock, and
+            // gives the lock back within seconds when traffic is switched away.
+            if !slot_active(&st).await {
+                if was_leader {
+                    let _ = st.cache.leader_release(&holder).await;
+                    info!(slot = %st.cfg.instance_id, "slot no longer active; released leadership");
+                    was_leader = false;
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
             let leader = st
                 .cache
                 .leader_acquire(&holder, (interval.as_millis() as u64) * 3)
                 .await
                 .unwrap_or(false);
             if leader {
+                if !was_leader {
+                    info!(slot = %st.cfg.instance_id, "leading background jobs");
+                }
+                was_leader = true;
                 if let Err(e) = tick(&st, ticks).await {
                     warn!("background tick failed: {e:#}");
                 }
                 ticks += 1;
+            } else {
+                was_leader = false;
             }
             tokio::time::sleep(interval).await;
         }
@@ -112,7 +141,7 @@ async fn tick(st: &Arc<AppState>, ticks: u64) -> anyhow::Result<()> {
     // Official quota (5h / 7d windows) once a minute-ish per enabled account,
     // official daily usage once an hour (deep backfill the first time).
     // Both are zero-cost upstream calls made through the account's proxy.
-    if ticks.is_multiple_of(4) {
+    if ticks.is_multiple_of(4) && slot_active(st).await {
         let hourly = ticks.is_multiple_of(240);
         for a in accounts
             .iter()

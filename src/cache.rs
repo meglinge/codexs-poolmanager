@@ -158,4 +158,30 @@ impl Cache {
             .await?;
         Ok(extended == 1)
     }
+
+    // ---- A/B slot ------------------------------------------------------------
+
+    /// Slot (`a` / `b`) the deployment controller marked active, if any.
+    /// Absent key = no slot distinction (both replicas may lead).
+    pub async fn active_slot(&self) -> anyhow::Result<Option<String>> {
+        let mut c = self.con.clone();
+        let v: Option<String> = c.get("pm:deploy:active").await?;
+        Ok(v.map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| s == "a" || s == "b"))
+    }
+
+    /// Give leadership back immediately (only if we still hold it) so the
+    /// new active slot can take over without waiting for the TTL.
+    pub async fn leader_release(&self, holder: &str) -> anyhow::Result<bool> {
+        let mut c = self.con.clone();
+        let script = redis::Script::new(
+            "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
+        );
+        let n: i64 = script
+            .key("pm:leader")
+            .arg(holder)
+            .invoke_async(&mut c)
+            .await?;
+        Ok(n == 1)
+    }
 }

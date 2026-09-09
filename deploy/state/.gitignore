@@ -1,0 +1,6 @@
+# Runtime state written by deploy/abctl.py — never delete this directory to
+# "reset": active.map is the only record of the active slot and operation.json
+# is the resume point. Only the default active.map is versioned.
+*
+!.gitignore
+!active.map

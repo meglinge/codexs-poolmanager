@@ -35,6 +35,13 @@ pub struct ServeConfig {
     /// Days of usage_events to keep.
     #[arg(long, env = "PM_USAGE_RETENTION_DAYS", default_value_t = 30)]
     pub usage_retention_days: i64,
+    /// A/B deployment control service (deploy/control_server.py), e.g.
+    /// `http://deployment:16828`. Unset = the 部署 page shows "not enabled".
+    #[arg(long, env = "PM_DEPLOY_URL")]
+    pub deploy_url: Option<String>,
+    /// Bearer token for the deployment control service (never sent to browsers).
+    #[arg(long, env = "PM_DEPLOY_TOKEN", hide_env_values = true)]
+    pub deploy_token: Option<String>,
 }
 
 /// `poolmanager runner`: supervises `codexs server` processes on this host.
