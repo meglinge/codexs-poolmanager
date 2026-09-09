@@ -102,6 +102,17 @@ IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]{0,200}(:[A-Za-z0-9._-]{1,128}|@sha
 MUTABLE_TAGS = {"latest", "main", "master", "edge", "nightly", "dev"}
 
 
+def image_has_registry(image):
+    """`ghcr.io/x/y:tag`、`localhost:5000/y:tag` → True;`codexs-poolmanager-runner:tag`、`org/y:tag`(Docker Hub)→ False。
+    只有带主机名的引用才值得 docker pull;本机 docker build 出来的镜像没有主机名。"""
+    ref = image.split("@", 1)[0]
+    parts = ref.split("/")
+    if len(parts) < 2:
+        return False
+    first = parts[0]
+    return "." in first or ":" in first or first == "localhost"
+
+
 def validate_image(image):
     """镜像必须是不可变标签(sha-<sha> / vX.Y.Z / @sha256:…);latest 之类一律拒绝,否则「回滚点」没有意义。"""
     if not isinstance(image, str) or not IMAGE_RE.match(image):
@@ -576,9 +587,7 @@ class Controller:
 
     def pull_image(self, image):
         """registry 镜像拉取;本机构建的镜像(名字里没有 registry 主机,且本地存在)直接用。"""
-        first = image.split("/", 1)[0]
-        has_registry = "." in first or ":" in first or first == "localhost"
-        if not has_registry:
+        if not image_has_registry(image):
             local = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
             if local.returncode == 0:
                 self.log(f"本地镜像 {image},不拉取")

@@ -98,6 +98,17 @@ class FakeWorld:
                     self.conns[s] = 0
 
 
+class ImageRefTest(unittest.TestCase):
+    def test_registry_detection(self):
+        has = abctl.image_has_registry
+        self.assertTrue(has("ghcr.io/meglinge/codexs-poolmanager:sha-8f59e84"))
+        self.assertTrue(has("localhost:5000/x:1"))
+        self.assertTrue(has("registry.local:443/a/b@sha256:" + "0" * 64))
+        self.assertFalse(has("codexs-poolmanager-runner:8f59e84-codexs-020daf4"))
+        self.assertFalse(has("library/redis:7"))
+        validate_image("codexs-poolmanager-runner:8f59e84-codexs-020daf4")
+
+
 class ControllerTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
