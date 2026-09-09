@@ -11,6 +11,8 @@
 #                    glibc as the runner image); 0: cargo on the host (only if the host glibc is not
 #                    newer than the runner image's)
 #   RUST_IMAGE       builder base                 (default: rust:1.95.0-bookworm — keep in step with rust-toolchain.toml)
+#   CODEXS_VERSION   official Codex version stamped into the build (User-Agent codex_cli_rs/<v>,
+#                    clientInfo.version); default: what the BASE_IMAGE's codexs reports
 #   NO_ROLL=1        only build the image, do not roll the runner
 set -euo pipefail
 
@@ -27,6 +29,9 @@ die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 command -v docker >/dev/null || die "docker is required"
 
 cd "$CODEX_SRC"
+# The version stamp (below) and the lock update it causes are local edits;
+# put them aside so fetch/checkout never conflicts, then re-apply.
+git checkout -q -- codex-rs/Cargo.toml codex-rs/Cargo.lock 2>/dev/null || true
 if [[ -n "$ref" ]]; then
   remote_ref="${ref#origin/}"
   log "Fetching $remote_ref"
@@ -34,7 +39,34 @@ if [[ -n "$ref" ]]; then
   git checkout -q FETCH_HEAD
 fi
 sha="$(git rev-parse --short=7 HEAD)"
-log "Building codexs from $(git log --oneline -1)"
+
+if [[ -z "${BASE_IMAGE:-}" ]]; then
+  BASE_IMAGE="$(python3 - "$here/deploy/state/images.json" <<'EOF'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    d = {}
+img = d.get("runner") or d.get("a") or ""
+# a previous local build: peel back to the published base it was built on
+if img.startswith("codexs-poolmanager-runner:"):
+    base = img.split(":", 1)[1].split("-codexs-", 1)[0]
+    img = "ghcr.io/meglinge/codexs-poolmanager:sha-" + base
+print(img)
+EOF
+)"
+fi
+[[ -n "$BASE_IMAGE" ]] || die "no BASE_IMAGE and deploy/state/images.json has no runner/slot image yet (run abctl deploy first)"
+
+# Same stamping the codexs CI does: every workspace crate reports the official
+# Codex version, so the User-Agent / clientInfo stay indistinguishable.
+if [[ -z "${CODEXS_VERSION:-}" ]]; then
+  CODEXS_VERSION="$(docker run --rm --entrypoint /opt/codexs/codexs "$BASE_IMAGE" --version 2>/dev/null | awk '{print $2}')"
+fi
+[[ "$CODEXS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "CODEXS_VERSION must be X.Y.Z (got '${CODEXS_VERSION:-}'; set it explicitly)"
+sed -i.bak "s/^version = \"0.0.0\"\$/version = \"${CODEXS_VERSION}\"/" codex-rs/Cargo.toml && rm -f codex-rs/Cargo.toml.bak
+grep -q "^version = \"${CODEXS_VERSION}\"\$" codex-rs/Cargo.toml || die "failed to stamp version ${CODEXS_VERSION} into codex-rs/Cargo.toml"
+log "Building codexs ${CODEXS_VERSION} from $(git log --oneline -1)"
 
 if [[ "$BUILD_IN_DOCKER" == "1" ]]; then
   builder="codexs-builder:${RUST_IMAGE##*:}"
@@ -59,23 +91,6 @@ fi
 bin="$release_dir/codexs"
 [[ -x "$bin" ]] || die "build produced no $bin"
 
-if [[ -z "${BASE_IMAGE:-}" ]]; then
-  BASE_IMAGE="$(python3 - "$here/deploy/state/images.json" <<'EOF'
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-except Exception:
-    d = {}
-img = d.get("runner") or d.get("a") or ""
-# a previous local build: peel back to the published base it was built on
-if img.startswith("codexs-poolmanager-runner:"):
-    base = img.split(":", 1)[1].split("-codexs-", 1)[0]
-    img = "ghcr.io/meglinge/codexs-poolmanager:sha-" + base
-print(img)
-EOF
-)"
-fi
-[[ -n "$BASE_IMAGE" ]] || die "no BASE_IMAGE and deploy/state/images.json has no runner/slot image yet (run abctl deploy first)"
 base_tag="${BASE_IMAGE##*:}"
 base_tag="${base_tag#sha-}"
 tag="codexs-poolmanager-runner:${base_tag}-codexs-${sha}"
