@@ -39,6 +39,8 @@ if [[ -n "$ref" ]]; then
   git checkout -q FETCH_HEAD
 fi
 sha="$(git rev-parse --short=7 HEAD)"
+# keep the container build's target dir out of git status
+grep -qx "codex-rs/target-bookworm" .git/info/exclude 2>/dev/null || echo "codex-rs/target-bookworm" >> .git/info/exclude
 
 if [[ -z "${BASE_IMAGE:-}" ]]; then
   BASE_IMAGE="$(python3 - "$here/deploy/state/images.json" <<'EOF'
