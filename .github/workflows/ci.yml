@@ -142,7 +142,7 @@ jobs:
       # versions with their commit message without a GitHub token.
       - id: commitmeta
         run: |
-          echo "subject=$(git log -1 --pretty=%s | tr -d '' | cut -c1-200)" >> "$GITHUB_OUTPUT"
+          echo "subject=$(git log -1 --pretty=%s | cut -c1-200)" >> "$GITHUB_OUTPUT"
           echo "author=$(git log -1 --pretty=%an | cut -c1-80)" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v5
