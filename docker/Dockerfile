@@ -1,6 +1,7 @@
 # poolmanager image: serves both roles (`serve` and `runner`).
 # The runner role needs the codexs binaries, which are downloaded from the
-# meglinge/codex releases at build time (CODEXS_VERSION = official Codex version).
+# meglinge/codex releases at build time (CODEXS_VERSION = official Codex version,
+# CODEXS_RELEASE = release tag suffix, e.g. 0.153.4-2 for a rebuild of 0.153.4).
 
 # Admin UI (React/Vite, see web/README.md) is embedded into the binary.
 FROM node:22-bookworm-slim AS web
@@ -20,13 +21,14 @@ RUN cargo build --release --locked && strip target/release/poolmanager
 
 FROM debian:bookworm-slim AS runtime
 ARG CODEXS_VERSION=0.153.4
+ARG CODEXS_RELEASE=0.153.4-2
 ARG CODEXS_REPO=meglinge/codex
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl tini \
  && rm -rf /var/lib/apt/lists/*
 # codexs + helpers next to it (codex-code-mode-host, bwrap)
 RUN set -eux; \
-    curl -fsSL "https://github.com/${CODEXS_REPO}/releases/download/codexs-v${CODEXS_VERSION}/codexs-${CODEXS_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+    curl -fsSL "https://github.com/${CODEXS_REPO}/releases/download/codexs-v${CODEXS_RELEASE}/codexs-${CODEXS_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
       -o /tmp/codexs.tar.gz; \
     mkdir -p /opt/codexs; \
     tar -xzf /tmp/codexs.tar.gz -C /opt/codexs --strip-components=1; \
