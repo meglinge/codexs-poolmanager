@@ -40,6 +40,8 @@ class FakeWorld:
             raise DeployError(f"模拟失败: {cmd}")
         if argv[:2] == ["docker", "pull"]:
             return ""
+        if argv[:3] == ["docker", "image", "inspect"]:
+            return ""  # nothing is built locally in the fake world
         if argv[:2] == ["docker", "compose"]:
             sub = argv[2:]
             if sub[:1] == ["ps"]:

@@ -588,8 +588,8 @@ class Controller:
     def pull_image(self, image):
         """registry 镜像拉取;本机构建的镜像(名字里没有 registry 主机,且本地存在)直接用。"""
         if not image_has_registry(image):
-            local = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
-            if local.returncode == 0:
+            local = self.run(["docker", "image", "inspect", "--format", "{{.Id}}", image], check=False)
+            if local and str(local).strip().startswith("sha256:"):
                 self.log(f"本地镜像 {image},不拉取")
                 return
         self.log(f"拉取镜像 {image}")
