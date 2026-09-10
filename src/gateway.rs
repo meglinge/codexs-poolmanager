@@ -329,8 +329,7 @@ async fn proxy(State(st): State<Arc<AppState>>, req: axum::extract::Request) -> 
             .request(parts.method.clone(), format!("{}{}", lease.url, path_q))
             .body(body_bytes.clone());
         for (name, value) in &parts.headers {
-            let n = name.as_str();
-            if n == "content-type" || n == "accept" || n.starts_with("x-asxs-") {
+            if forward_request_header(name.as_str()) {
                 upstream = upstream.header(name, value);
             }
         }
@@ -379,9 +378,8 @@ async fn proxy(State(st): State<Arc<AppState>>, req: axum::extract::Request) -> 
     let status = resp.status();
     let mut out_headers = HeaderMap::new();
     for (name, value) in resp.headers() {
-        let n = name.as_str();
-        if n == "content-type" || n == "cache-control" || n.starts_with("x-asxs-") {
-            out_headers.insert(name.clone(), value.clone());
+        if relay_response_header(name.as_str()) {
+            out_headers.append(name.clone(), value.clone());
         }
     }
     // A session id in the response header pins future requests carrying it.
@@ -422,6 +420,44 @@ async fn proxy(State(st): State<Arc<AppState>>, req: axum::extract::Request) -> 
 /// Wraps the upstream byte stream: keeps the head and tail of the body to
 /// extract the response id (stickiness) and token usage, and settles the
 /// in-flight counters / usage record when the stream ends or is dropped.
+/// Request headers travel through untouched: a Codex CLI client sends its
+/// originator / User-Agent / session_id / x-codex-* (installation id, turn
+/// metadata, the `x-codex-turn-state` echo that keeps upstream routing sticky
+/// and the prompt cache warm) / attestation / Lite headers, and codexs forwards
+/// them as the client's fingerprint. Only what must not leave stays behind:
+/// hop-by-hop, the downstream API key, and anything naming the downstream network.
+fn forward_request_header(name: &str) -> bool {
+    !matches!(
+        name,
+        "host"
+            | "content-length"
+            | "transfer-encoding"
+            | "connection"
+            | "keep-alive"
+            | "proxy-authorization"
+            | "proxy-authenticate"
+            | "proxy-connection"
+            | "te"
+            | "trailer"
+            | "upgrade"
+            | "accept-encoding"
+            | "authorization"
+            | "forwarded"
+            | "x-real-ip"
+            | "cf-connecting-ip"
+            | "true-client-ip"
+    ) && !name.starts_with("x-forwarded-")
+}
+
+/// Response headers travel back likewise (`x-codex-turn-state`, rate-limit
+/// headers, request ids); the framing ones are re-derived by this hop.
+fn relay_response_header(name: &str) -> bool {
+    !matches!(
+        name,
+        "content-length" | "transfer-encoding" | "connection" | "content-encoding" | "keep-alive"
+    )
+}
+
 struct Observer {
     st: Arc<AppState>,
     key: ApiKey,
